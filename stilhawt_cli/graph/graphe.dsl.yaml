@@ -11,110 +11,110 @@ pivot:
   - vers
 genres:
   groupe:
-    label: groupe
+    label: group
     forme: rectangle_arrondi
     conteneur: true
     epaisseur: 2
     contour: plein
   perimetre:
-    label: périmètre — non évalué
+    label: scope — not evaluated
     forme: rectangle_arrondi
     conteneur: true
     epaisseur: 2
     contour: tirets
   bloc:
-    label: composant
+    label: component
     forme: rectangle
     conteneur: false
     contour: plein
   table:
-    label: table / entité
+    label: table / entity
     forme: rectangle
     conteneur: false
     contour: plein
   stockage:
-    label: dépôt de données
+    label: data store
     forme: cylindre
     conteneur: false
     contour: plein
   decision:
-    label: décision
+    label: decision
     forme: losange
     conteneur: false
     contour: plein
   externe:
-    label: système tiers
+    label: third-party system
     forme: hexagone
     conteneur: false
     contour: tirets
   inconnu:
-    label: cible non déclarée
+    label: undeclared target
     forme: losange
     conteneur: false
     contour: tirets
 types_arete:
   flux:
-    label: flux
+    label: flow
     trait: plein
     fleche: classique
     couleur: '#8a93a2'
   reference:
-    label: référence / écrit
+    label: reference / writes
     trait: plein
     fleche: creuse
     couleur: '#4a7bd0'
   derive:
-    label: dérive de
+    label: derives from
     trait: pointille
     fleche: classique
     couleur: '#8a7bd0'
   alerte:
-    label: alerte
+    label: alert
     trait: pointille
     fleche: classique
     couleur: '#3ecf8e'
   lecture:
-    label: lecture seule
+    label: read only
     trait: tirets
     fleche: creuse
     couleur: '#8a93a2'
   indetermine:
-    label: aboutit où ? — non déclaré
+    label: leads where? — undeclared
     trait: pointille
     fleche: creuse
     couleur: '#d06a6a'
 etats:
   ok:
     couleur: '#3ecf8e'
-    label: conforme
+    label: conforming
   attention:
     couleur: '#c9a94a'
-    label: à surveiller
+    label: to watch
   probleme:
     couleur: '#d06a6a'
-    label: écart
+    label: gap
   absent:
     couleur: '#6b7280'
-    label: déclaré mais absent
+    label: declared but missing
   non_declare:
     couleur: '#b06a9c'
-    label: rien de déclaré
+    label: nothing declared
   neutre:
     couleur: '#8a93a2'
     label: —
 provenances:
   declare:
     couleur: '#c9a94a'
-    label: déclaré — arbitré à la main
+    label: declared — arbitrated by hand
   registre:
     couleur: '#8a7bd0'
-    label: registre — dérivé d'un contrat versionné
+    label: registry — derived from a versioned contract
   deploye:
     couleur: '#3ecf8e'
-    label: déployé — lu sur ce qui tourne
+    label: deployed — read on what runs
 dispositions:
   couches:
-    label: En couches (croisements minimisés)
+    label: Layered (fewest crossings)
     methode: sugiyama
     defaut: true
     phases:
@@ -122,18 +122,17 @@ dispositions:
     - rangs
     - ordre_mediane
     - abscisses_barycentre
-    note: 'La phase `acyclique` n''est pas optionnelle : le plus long chemin n''est défini que sur un
-      graphe sans cycle. Mesuré le 23/09 sur le schéma Frequencies — UN seul cycle (poles ⇄ personnes)
-      donnait 45 couches pour 20 tables et PLUS de croisements qu''au départ.'
+    note: 'The `acyclique` phase is not optional: the longest path is only defined on an acyclic graph
+      — one cycle is enough to multiply the layers and the crossings.'
   colonnes:
-    label: Colonnes (conteneurs)
+    label: Columns (containers)
     methode: colonnes_barycentre
-    note: 'Pour un graphe à conteneurs (un parent et ses enfants) : les layouts de force font CHEVAUCHER
-      les boîtes parentes. Colonnes à gauche, cibles à droite ordonnées par barycentre de leurs sources.'
+    note: 'For a graph of containers (a parent and its children): force layouts make parent boxes OVERLAP.
+      Containers on the left, targets on the right, ordered by the barycentre of their sources.'
   grille:
-    label: Grille
+    label: Grid
     methode: grille
-    note: Mise en place, sans optimisation. Pour un graphe sans arête ou pour comparer.
+    note: Placement only, no optimisation. For a graph without edges, or to compare.
 geometrie:
   dx: 280
   dy: 150

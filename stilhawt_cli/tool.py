@@ -520,7 +520,7 @@ def grammar_rows(doc: dict | None = None) -> list[dict]:
     """The CLI's own grammar AS DATA — one row per command and per pipe, with its effect, its
     options (read at the source: the Toolset for a `kind: tool` command, the declared option set
     for a model pipe) and its description. `help` prints the grammar for a human; this streams it,
-    so `tools commands | view graph namespace name` draws the CLI itself."""
+    so `tools commands | view graph namespace command --mode contains` draws the CLI itself."""
     if doc is None:
         from stilhawt_cli import grammar as _cli   # the grammar alone, never the engine (SBR)
         doc = _cli.load()
@@ -538,11 +538,13 @@ def grammar_rows(doc: dict | None = None) -> list[dict]:
                     opts = [a.name if not a.positional else f"<{a.dest}>" for a in ts.verbs[verb].args]
                 except Exception:  # noqa: BLE001 — a tool that does not load is said, not hidden
                     opts = ["(tool not loadable)"]
-            rows.append({"namespace": ns, "name": cmd, "kind": "command", "effect": c.get("effect"),
+            # `command` = the FULL line head (`dsl read`): a name alone repeats across namespaces (`read`,
+            # `list`), and a graph keyed on it merged `dsl read` with `data read` (2026-09-29).
+            rows.append({"namespace": ns, "name": cmd, "command": f"{ns} {cmd}", "kind": "command", "effect": c.get("effect"),
                          "options": opts, "description": " ".join(str(c.get("description", "")).split())[:200]})
     for name, p in (doc.get("pipes") or {}).items():
         opts = [o.split()[0] for o, _ in AI_OPTIONS.get(p.get("mode"), [])] if p.get("mode") else []
-        rows.append({"namespace": "pipes (model)" if p.get("mode") else "pipes", "name": name, "kind": "pipe",
+        rows.append({"namespace": "pipes (model)" if p.get("mode") else "pipes", "name": name, "command": name, "kind": "pipe",
                      "effect": p.get("effect"), "options": opts,
                      "description": " ".join(str(p.get("description", "")).split())[:200]})
     return rows
@@ -556,8 +558,8 @@ tools.verb("list", does="every conforming tool found in the code, its verbs, and
            types={"module": "str", "verb": "str", "does": "str", "effect": "str", "input": "list", "output": "dict",
                   "mapped_to": "str"})(lambda: discover())
 tools.verb("commands", does="the CLI's own grammar as data: one row per command and pipe, its effect, options and description",
-           output=["namespace", "name", "kind", "effect", "options", "description"],
-           types={"namespace": "str", "name": "str", "kind": "str", "effect": "str", "options": "list",
+           output=["namespace", "name", "command", "kind", "effect", "options", "description"],
+           types={"namespace": "str", "name": "str", "command": "str", "kind": "str", "effect": "str", "options": "list",
                   "description": "str"})(lambda: grammar_rows())
 
 def conformance(doc: dict) -> tuple[int, list[str]]:

@@ -119,6 +119,22 @@ stilhawt dsl read examples/service.yaml rules | groq "Is this rule risky? One wo
 `dsl tree` lists every node with its **dotted path** — exactly what `where`, `select` and an AI pipe's
 `--on` take — so you find the field, then send only it. `dsl read` selects with JMESPath (jmespath.org).
 
+## Draw it
+
+`view` turns any stream into a local page — nothing leaves your machine. The CLI can draw itself:
+
+```text
+stilhawt tools commands | where kind eq command | view graph namespace command --mode contains
+stilhawt data read examples/reviews.csv | view bar product stars
+```
+
+![The CLI's own grammar, drawn by the CLI](docs/grammar.svg)
+
+`view graph` takes two field names and links the value of the first to the value of the second;
+`--mode contains` makes each first value a frame around its second values (a grammar, a folder
+tree), the default draws edges. `--engine mermaid` writes text
+you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page without opening it.
+
 ## The language in five minutes
 
 | Stage | What it does | Example |

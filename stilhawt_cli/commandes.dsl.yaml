@@ -178,7 +178,8 @@ pipes:
       is.'
     usage: view (auto) | view table | view doc [<text key>] | view bar <label> <number> | view tree (after
       `explain … --json`) | view graph <source> <target> [--engine cytoscape|svg|mermaid|drawio] [--mode
-      auto|contains|edges] [--title "…"] — e.g. `tools commands | view graph namespace name --engine mermaid`
+      auto|contains|edges] [--title "…"] — e.g. `tools commands | view graph namespace command --mode
+      contains --engine mermaid`
     effect: display
   diff:
     description: 'what changed since the previous run of the same line: rows `added` · `removed` · `changed`
@@ -294,8 +295,10 @@ namespaces:
           - does
       commands:
         description: 'the CLI''s own grammar AS DATA — one row per command and pipe (namespace, name,
-          effect, options read at their source, description) — so it pipes: `tools commands | view graph
-          namespace name` draws the CLI itself; `help` is the same grammar printed for a human'
+          the full `command` line head, effect, options read at their source, description) — so it pipes:
+          `tools commands | where kind eq command | view graph namespace command --mode contains` draws
+          the CLI itself, each namespace framing its commands (`name` alone repeats across namespaces:
+          `read`); `help` is the same grammar printed for a human'
         effect: read
         pan: texte
         kind: tool
@@ -303,6 +306,7 @@ namespaces:
         output:
         - namespace
         - name
+        - command
         - kind
         - effect
         display:

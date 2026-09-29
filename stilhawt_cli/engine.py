@@ -3296,7 +3296,7 @@ def main(argv: list[str] | None = None) -> int:
             if "|" in a:
                 # `help` PRINTS the grammar for a human; the grammar as a stream is a command.
                 print("REFUSED: `help` prints text, it does not stream objects — the grammar as data is "
-                      "`tools commands` (e.g. `tools commands | view graph namespace name`)", file=sys.stderr)
+                      "`tools commands` (e.g. `tools commands | view graph namespace command --mode contains`)", file=sys.stderr)
                 return 2
             words = [x for x in a[1:] if not x.startswith("--")]
             if len(words) >= 2 or (len(words) == 1 and words[0] not in (doc.get("namespaces") or {})):
