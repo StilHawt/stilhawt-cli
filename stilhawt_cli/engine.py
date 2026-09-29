@@ -52,7 +52,9 @@ ACTING = {"write", "deploy", "device"}
 # its reason in the selftest — never slipped into a grammar. A grammar with none passes.
 # `oss push` (2026-09-29, OSS-PLAN B5): publishes the public repository — plans by default, refuses an
 # existing repo or receipt, runs only on a human go (--apply). Added knowingly.
-ACTING_RATIFIED = frozenset({"build run", "deploy apply", "flash run", "gov draw", "oss export", "oss push"})
+# `oss release` (2026-09-29, OSS-PLAN C2): a new version, one commit on the PUBLIC history, never forced,
+# refused if the public repository moved since our last receipt. Added knowingly.
+ACTING_RATIFIED = frozenset({"build run", "deploy apply", "flash run", "gov draw", "oss export", "oss push", "oss release"})
 PIPE_FIELDS = {"description", "usage", "alias", "effect", "delegate", "egress", "default_mandate",
                "max_objects", "mode", "transport"}
 DISPLAY_FIELDS = {"layout", "columns", "formats"}
@@ -302,8 +304,16 @@ def acting_args(c: dict, args: list[str]) -> list[str]:
     return list(args) if "--apply" in args or "--plan" in args else [*args, "--plan"]
 
 
+CALLER_CWD = "STILHAWT_CALLER_CWD"
+
+
 def kind_command(c: dict, root: Path, args: list[str]) -> list[dict]:
-    r = subprocess.run(_python(list(c["command"]), root) + acting_args(c, args), cwd=str(root),
+    # The tool runs from the ROOT (its homes are relative to it), but a path the USER typed is relative
+    # to where they stand: the caller's directory travels with the call, and a tool resolves user paths
+    # against it (`cli.std.here`). Found running the README's `data read examples/…` from a clone
+    # (2026-09-29): the file was looked for under the root.
+    env = {**os.environ, CALLER_CWD: os.environ.get(CALLER_CWD) or os.getcwd()}
+    r = subprocess.run(_python(list(c["command"]), root) + acting_args(c, args), cwd=str(root), env=env,
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=c.get("timeout_s", 300), creationflags=_NO_WINDOW)
     # A VERDICT code is not a crash: a checker exits 1 precisely when it found failures, and that

@@ -1,0 +1,37 @@
+# service.yaml — an EXAMPLE contract, to show how the CLI navigates a DSL.
+#
+# A DSL here is just a YAML document with a closed vocabulary: the CLI reads it as data.
+#   stilhawt dsl tree examples/service.yaml --depth 2          # every node and its dotted path
+#   stilhawt dsl read examples/service.yaml "rules[?effect=='write'].id"
+#   stilhawt dsl read examples/service.yaml rules | groq "Is this rule risky? One word." --on value --pan texte
+
+name: orders-service
+owner: team-checkout
+version: 3
+
+effects:
+  read: changes nothing
+  write: changes data this service owns
+  network: talks to another service
+
+rules:
+  - id: list-orders
+    effect: read
+    who: [customer, support]
+    note: a customer sees their own orders only
+  - id: cancel-order
+    effect: write
+    who: [customer]
+    note: allowed until the order is shipped
+  - id: refund
+    effect: write
+    who: [support]
+    note: above 200 EUR a second person approves
+  - id: notify-carrier
+    effect: network
+    who: [system]
+    note: retried three times, then flagged for a human
+
+limits:
+  requests_per_minute: 600
+  max_items_per_order: 50

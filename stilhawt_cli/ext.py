@@ -100,6 +100,24 @@ def egress_contract(fn=None):
     return fn
 
 
+_CREDENTIALS: dict = {}
+
+
+def credential(provider: str, variable: str, probe=None, how: str = ""):
+    """Declare the credential a transport needs: the environment VARIABLE that holds it, how to set it,
+    and an optional `probe() -> "valid" | "refused (…)" | "unreachable (…)"` (one tiny read call).
+    `stilhawt ai keys` lists what is set — NEVER a value; `ai probe` asks each provider. A provider
+    declared twice by two modules is refused."""
+    prev = _CREDENTIALS.get(provider)
+    if prev and prev["variable"] != variable:
+        raise Refusal(f"credential `{provider}` already declared with {prev['variable']}")
+    _CREDENTIALS[provider] = {"variable": variable, "probe": probe, "how": how}
+
+
+def credentials() -> dict:
+    return dict(_CREDENTIALS)
+
+
 _DATA_DIR: list = []
 
 
@@ -153,7 +171,7 @@ def _selftest() -> int:
             print(f"✗ {name}")
 
     saved_t, saved_g, saved_a = {m: dict(t) for m, t in TRANSPORTS.items()}, list(_GUARD), list(_GRAPH_AUDIT)
-    saved_c, saved_d = list(_EGRESS_CONTRACT), list(_DATA_DIR)
+    saved_c, saved_d, saved_k = list(_EGRESS_CONTRACT), list(_DATA_DIR), dict(_CREDENTIALS)
     try:
         for t in TRANSPORTS.values():
             t.clear()
@@ -224,6 +242,16 @@ def _selftest() -> int:
             got = "refused"
         check("MUST-FAIL a second contract is refused", got == "refused")
 
+        # credentials: declared by name of VARIABLE, never a value
+        _CREDENTIALS.clear()
+        credential("p", "P_KEY", how="export P_KEY=…")
+        check("a credential is declared by its variable", credentials()["p"]["variable"] == "P_KEY")
+        try:
+            credential("p", "OTHER_KEY")
+            got = "accepted"
+        except Refusal:
+            got = "refused"
+        check("MUST-FAIL one provider, two variables is refused", got == "refused")
         # data dir: the default place, overridable by env; a registered one wins
         import os
         import tempfile
@@ -259,6 +287,8 @@ def _selftest() -> int:
         _GRAPH_AUDIT[:] = saved_a
         _EGRESS_CONTRACT[:] = saved_c
         _DATA_DIR[:] = saved_d
+        _CREDENTIALS.clear()
+        _CREDENTIALS.update(saved_k)
     print(f"{ok}/{total} selftests passed")
     return 0 if ok == total else 1
 

@@ -36,6 +36,7 @@ grammar:
     generate: writes one short line per object (or one answer for the set with `--all`)
   transport:
     groq: the Groq chat API with the user's own key (GROQ_API_KEY) — mode generate
+    jev: TypeSafe's System One API (Jev) with the user's own key (TYPESAFE_API_KEY) — mode decide
   pan:
     texte: prose, names, descriptions — sent as is
     code: source code or lines of it — sent as is
@@ -51,7 +52,7 @@ allowed_effects:
 - deploy
 - device
 extensions:
-- stilhawt_cli.ext_groq
+- stilhawt_cli.ext_models
 pipes:
   where:
     description: keeps objects matching a condition on ONE key
@@ -195,20 +196,74 @@ pipes:
       it is never a message to anyone. The gate answers before the OS shows it: `requested`, not `shown`.'
     usage: notify "<title>" — a local notification (says `not sent` when no notifier answers)
     effect: display
+  jev:
+    description: 'asks Jev (TypeSafe System One) to pick ONE of your options per object — a typed decision,
+      no generated text; adds `jev: {choice, margin, p}`. Filter on the MARGIN (top − second probability),
+      not on a confidence. Only the fields `--on` names leave. Your key: TYPESAFE_API_KEY.'
+    usage: jev "<question>" --options a,b,c [--on key,key] [--pan texte|code] [--max 50]
+    effect: network
+    mode: decide
+    transport: jev
+    delegate: jev
+    egress:
+      contract: ext_models
+      destination: jev
+    max_objects: 50
   groq:
-    description: asks Groq (fast, cheap, GENERATES text) for one short line per object, added as `groq`
+    description: 'asks Groq (fast, cheap, GENERATES text) for one short line per object, added as `groq`
       — or, with `--all`, ONE answer for the whole set. The text is data, never executed, cut at 300 characters.
-      Your key (GROQ_API_KEY); the egress guard refuses raw data, people and images.
+      Only the fields `--on` names leave; the egress guard refuses raw data, people and images unless
+      you say what the fields are (`--pan texte`). Your key: GROQ_API_KEY.'
     usage: groq "<question>" [--all] [--on key,key] [--pan texte|code] [--max 50]
     effect: network
     mode: generate
     transport: groq
     delegate: groq
     egress:
-      contract: ext_groq
+      contract: ext_models
       destination: groq
     max_objects: 50
 namespaces:
+  dsl:
+    description: navigate any YAML / JSON document — `read` selects with JMESPath (jmespath.org), `tree`
+      lists every node with the dotted path `where`, `select` and an AI pipe's `--on` take
+    home: stilhawt_cli/std.py
+    shared_home: one module of generic tools (std); each namespace is a family of gestures
+    export: client
+    commands:
+      read:
+        description: 'navigate any YAML / JSON document with JMESPath: `dsl read examples/service.yaml
+          "rules[?effect==''write''].id"`'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:dsl-read
+        output:
+        - key
+        - value
+        - type
+        display:
+          columns:
+          - key
+          - value
+          - type
+      tree:
+        description: 'a document flattened: one row per node, its dotted PATH — exactly the key `where`,
+          `select` and an AI pipe''s `--on` take — its type and a brief value: `dsl tree examples/service.yaml
+          --depth 2`'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:dsl-tree
+        output:
+        - path
+        - type
+        - value
+        display:
+          columns:
+          - path
+          - type
+          - value
   tools:
     description: the conforming tools of the workspace — found by their format in the code, described
       by themselves (`--describe`, a separate process), joined to the command that maps each. An `unmapped`
@@ -260,6 +315,120 @@ namespaces:
           - description
           formats:
             options: compact
+  fs:
+    description: files of a directory, as facts — what they are and what they say
+    home: stilhawt_cli/std.py
+    export: client
+    commands:
+      files:
+        description: 'one row per file with a known language — git-tracked inside a repository, else a
+          walk: path, language, kind (code · markup · config/data · doc), lines, vendored. Count the code:
+          `fs files | where vendored eq false | where kind eq code | group language sum lines`'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:fs-files
+        timeout_s: 300
+        output:
+        - path
+        - language
+        - kind
+        - lines
+        display:
+          columns:
+          - path
+          - language
+          - kind
+          - lines
+          - vendored
+      search:
+        description: 'a typed grep over text files: `fs search TODO --glob "*.py" | group file`'
+        effect: read
+        pan: code
+        kind: tool
+        tool: stilhawt_cli.std:fs-search
+        timeout_s: 300
+        output:
+        - file
+        - line
+        - text
+        display:
+          columns:
+          - file
+          - line
+          - text
+    shared_home: one module of generic tools (std); each namespace is a family of gestures
+  data:
+    description: any data file as rows, for the pipes
+    home: stilhawt_cli/std.py
+    shared_home: one module of generic tools (cli.std); each namespace is a family of gestures
+    export: client
+    commands:
+      read:
+        description: 'a JSON, JSON Lines, CSV, TSV or YAML file as rows — the file''s own keys. Its pan
+          is RAW DATA: an AI pipe refuses it until you name the fields that leave and what they are (`--on
+          text --pan texte`)'
+        effect: read
+        pan: donnees
+        kind: tool
+        tool: stilhawt_cli.std:data-read
+        output:
+        - row
+  repo:
+    description: git repositories under a directory
+    home: stilhawt_cli/std.py
+    shared_home: one module of generic tools (cli.std); each namespace is a family of gestures
+    export: client
+    commands:
+      status:
+        description: 'every git repository under a directory: branch, modified, untracked, ahead / behind
+          — `repo status . | where modified gt 0`'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:repo-status
+        timeout_s: 300
+        output:
+        - repo
+        - branch
+        - modified
+        - untracked
+        display:
+          columns:
+          - repo
+          - branch
+          - modified
+          - untracked
+          - ahead
+          - behind
+          - last_commit
+          formats:
+            last_commit: datetime
+  http:
+    description: one HTTP request, as a row
+    home: stilhawt_cli/std.py
+    shared_home: one module of generic tools (cli.std); each namespace is a family of gestures
+    export: client
+    commands:
+      get:
+        description: 'one GET: status, time, content type, size, page title — `http get https://example.org`'
+        effect: network
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:http-get
+        timeout_s: 60
+        output:
+        - url
+        - status
+        - ms
+        display:
+          columns:
+          - status
+          - ms
+          - type
+          - bytes
+          - title
+          - url
   snip:
     description: the agents' SNIPPET library (contract SNP) — named lines for recurring use cases, run
       as `stilhawt @<id> [| pipes]`; every run is recorded with its conversation, Jev suggests one per
@@ -304,3 +473,44 @@ namespaces:
           formats:
             ts: datetime
             ok: check
+  ai:
+    description: the model keys the extensions declare — never a value
+    home: stilhawt_cli/std.py
+    shared_home: one module of generic tools (std); each namespace is a family of gestures
+    export: client
+    commands:
+      keys:
+        description: the model keys the extensions declare — the VARIABLE that holds each, whether it
+          is set, how to set it; never a value
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:ai-keys
+        output:
+        - provider
+        - variable
+        - set
+        display:
+          columns:
+          - provider
+          - variable
+          - set
+          - how
+          formats:
+            set: check
+      probe:
+        description: each declared model key tried with ONE tiny read call — valid, refused, unreachable;
+          never a value
+        effect: network
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:ai-probe
+        timeout_s: 60
+        output:
+        - provider
+        - state
+        display:
+          columns:
+          - provider
+          - variable
+          - state

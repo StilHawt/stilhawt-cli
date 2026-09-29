@@ -21,8 +21,13 @@ modeles_connus:
   groq:
     quoi: short generated text (the `groq` pipe)
     cout: your Groq quota (tokens per minute)
-    foyer: stilhawt_cli/ext_groq.py
+    foyer: stilhawt_cli/ext_models.py
     outil: groq
+  jev:
+    quoi: a typed decision among given options (the `jev` pipe)
+    cout: your TypeSafe quota
+    foyer: stilhawt_cli/ext_models.py
+    outil: jev
 
 serveur_modeles:
   nom: modeles
@@ -33,7 +38,7 @@ mandats:
     pour: a human at a terminal, who may use the model pipes
     racine: .
     outils: {}
-    modeles: [groq]
+    modeles: [groq, jev]
     budget:
       minutes: 60
     preuve:
@@ -45,8 +50,8 @@ mandats:
     pour: answer a question by reading the CLI, touching nothing
     racine: .
     outils:
-      cli: [tools list, tools commands, snip list, snip uses,
-            where, grep, select, sort, head, count, group, join]
+      cli: [tools list, tools commands, snip list, snip uses, fs files, fs search, data read,
+            dsl read, dsl tree, repo status, where, grep, select, sort, head, count, group, join]
     modeles: []
     budget:
       minutes: 5

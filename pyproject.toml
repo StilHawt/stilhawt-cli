@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stilhawt-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "A typed, bounded command line for humans and AI agents: commands declared in a grammar, JSON Lines pipes, parallel branches, AI pipes behind an egress guard."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [{name = "StilHawt"}]
 requires-python = ">=3.10"
-dependencies = ["pyyaml>=6.0"]
+dependencies = ["pyyaml>=6.0", "jmespath>=1.0"]   # jmespath: `dsl read` navigates with the published standard
 keywords = ["cli", "pipes", "json-lines", "ai-agents", "least-privilege", "grammar"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",

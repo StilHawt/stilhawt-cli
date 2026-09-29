@@ -29,3 +29,13 @@ snippets:
     line: "snip list | sort -uses | head 10"
     origin: {source: example}
     status: active
+  loc:
+    intent: how many lines of code in this directory, per language, vendored code left out
+    line: "fs files | where vendored eq false | where kind eq code | group language sum lines"
+    origin: {source: example}
+    status: active
+  dirty-repos:
+    intent: which git repositories below have uncommitted changes
+    line: "repo status | where modified gt 0 | select repo branch modified untracked"
+    origin: {source: example}
+    status: active
