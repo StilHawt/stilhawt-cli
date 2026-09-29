@@ -1,0 +1,31 @@
+# snippets.dsl.yaml — EXAMPLE snippet library: NAMED lines of the `stilhawt` CLI.
+#
+# A snippet is a line you (or an agent) run often, given a name: `stilhawt @<id> [| more pipes]`.
+# The CLI expands it, runs it, and records the use (id, time, rows) in its data directory.
+# `stilhawt explain @<id>` shows the expanded line without running it.
+#
+# The bounds, linted by `python -m stilhawt_cli.snippets --check`:
+#   · a line parses and passes the CLI's static gate (known commands and pipes, allowed effects);
+#   · a snippet READS: no model pipe, no display or record stage;
+#   · an id is a word (lowercase, digits, `-`), never a namespace or a pipe name.
+#
+# `intent` is what the snippet answers, in the words its users ask the question.
+
+version: 1
+
+snippets:
+  commands-by-namespace:
+    intent: which commands does this CLI have, grouped by namespace
+    line: "tools commands | where kind eq command | group namespace"
+    origin: {source: example}
+    status: active
+  verbs:
+    intent: which tool verbs are installed, and what each one does
+    line: "tools list | select module verb does effect"
+    origin: {source: example}
+    status: active
+  most-used:
+    intent: which snippets are used the most
+    line: "snip list | sort -uses | head 10"
+    origin: {source: example}
+    status: active

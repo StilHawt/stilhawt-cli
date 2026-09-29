@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stilhawt-cli"
+version = "0.1.0"
+description = "A typed, bounded command line for humans and AI agents: commands declared in a grammar, JSON Lines pipes, parallel branches, AI pipes behind an egress guard."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [{name = "StilHawt"}]
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+keywords = ["cli", "pipes", "json-lines", "ai-agents", "least-privilege", "grammar"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+]
+
+[project.optional-dependencies]
+# The shell: tables (rich), completion and history (prompt_toolkit). Without them the CLI still
+# works — aligned columns and input() — only less comfortable.
+shell = ["rich>=13", "prompt_toolkit>=3.0"]
+
+[project.scripts]
+stilhawt = "stilhawt_cli.engine:main"
+
+[tool.setuptools.packages.find]
+include = ["stilhawt_cli*"]
+
+# THE CONTRACTS TRAVEL WITH THEIR ENGINE: the grammar, the graph vocabulary and the example
+# mandates / snippets are YAML files the code reads. A wheel without them installs and does nothing.
+[tool.setuptools.package-data]
+"stilhawt_cli" = ["*.yaml"]
+"stilhawt_cli.graph" = ["*.yaml"]
+"stilhawt_cli.snippets" = ["*.yaml"]

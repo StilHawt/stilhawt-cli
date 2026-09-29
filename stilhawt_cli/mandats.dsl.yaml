@@ -1,0 +1,56 @@
+# mandats.dsl.yaml — EXAMPLE mandates: what an AI agent may TOUCH when it runs `stilhawt` lines.
+#
+# The engine reads this file when a line runs under a mandate (STILHAWT_MANDAT=<id>): every command
+# and every pipe of the line must be granted under the family `cli`, otherwise the line is refused
+# before anything runs. A grant is a list of NAMED commands and pipes — never a wildcard.
+#
+# The keys are the mandate engine's vocabulary (it was written in French): `familles` (tool families),
+# `modeles_connus` (the models an agent may ask), `mandats`, and per mandate `pour` (what it is for),
+# `racine` (its root), `outils` (grants), `modeles`, `budget`, `preuve` (proof of work), `destructif`.
+# Replace this file with your own (or point STILHAWT_MANDATS at it); `python -m stilhawt_cli.mandat
+# --check` lints it.
+
+familles:
+  lire:     {rend: [Read, Glob, Grep], portee: chemins, description: read files inside the root}
+  ecrire:   {rend: [Edit, Write], portee: chemins, description: change NAMED files}
+  lancer:   {rend: [Bash], portee: commandes, description: run NAMED commands}
+  naviguer: {rend: [WebFetch, WebSearch], portee: aucune, description: reach the open network}
+  cli:      {rend: [Bash], portee: cli, description: run NAMED commands of the `stilhawt` CLI, read-only}
+
+modeles_connus:
+  groq:
+    quoi: short generated text (the `groq` pipe)
+    cout: your Groq quota (tokens per minute)
+    foyer: stilhawt_cli/ext_groq.py
+    outil: groq
+
+serveur_modeles:
+  nom: modeles
+  commande: [python, -m, stilhawt_cli]
+
+mandats:
+  - id: humain.atelier
+    pour: a human at a terminal, who may use the model pipes
+    racine: .
+    outils: {}
+    modeles: [groq]
+    budget:
+      minutes: 60
+    preuve:
+      artefact: .                    # none: a human holds the wheel
+      secondes_mini: 0
+    destructif: false
+
+  - id: cli.reader
+    pour: answer a question by reading the CLI, touching nothing
+    racine: .
+    outils:
+      cli: [tools list, tools commands, snip list, snip uses,
+            where, grep, select, sort, head, count, group, join]
+    modeles: []
+    budget:
+      minutes: 5
+    preuve:
+      artefact: .                    # the answer is read on stdout by the caller
+      secondes_mini: 1
+    destructif: false

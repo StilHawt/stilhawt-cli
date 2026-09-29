@@ -1,0 +1,306 @@
+trigramme: CLI
+version: 3
+grammar:
+  effect:
+    read: changes nothing, anywhere
+    write: changes a file or a repository on this host
+    network: talks to a remote host (even read-only)
+    display: writes a page into data\cli\ and opens it LOCALLY — fixed templates, no script, no network
+    record: writes a snapshot under data\cli\snaps\ ONLY (atomic) — the memory `diff` compares against
+    deploy: changes a host of the fleet
+    device: changes a physical device plugged into this host (flashes a firmware)
+  export:
+    client: may ship to a client (assumes neither this host, nor the tailnet, nor secrets)
+    internal: stays inside the Stilhawt workshop (assumes the tailnet or internal tools)
+    local: bound to THIS host (paths, keyring, transcripts)
+  kind:
+    command: runs the home tool and reads its JSON lines (the tool speaks JSON Lines)
+    state: reads a JSON state file kept by a daemon or a generator, and states its AGE
+    derived: commands BUILT from the `moteur:` of the workspace contracts
+    tool: runs ONE verb of a Toolset module (field `tool` = module:verb, cli/tool.py) — the mapping command
+      <-> tool, checked both ways by --check
+  layout:
+    table: one row per object, one column per key
+    record: a single object, one row per key (key · value)
+  format:
+    text: the value as is
+    check: true → ✓, false → ✗
+    alert: true → ⚠ (red), false → nothing — for a flag that should only show when raised
+    exit_code: process exit code — 0 → ✓, otherwise ✗ and the code
+    duration: seconds → "25 s", "68 min", "23 h", "2 d"
+    percent: an object of numbers → "five_hours 11 % · week 14 %"
+    datetime: an ISO date (or an object of dates) → short LOCAL time "Fri 18:30" (UTC misleads)
+    compact: an object or a list → one-line JSON, truncated
+  mode:
+    decide: picks ONE of the given options per object — a typed decision, adds {choice, margin, p}
+    generate: writes one short line per object (or one answer for the set with `--all`)
+  transport:
+    groq: the Groq chat API with the user's own key (GROQ_API_KEY) — mode generate
+  pan:
+    texte: prose, names, descriptions — sent as is
+    code: source code or lines of it — sent as is
+    donnees: raw data, figures, records — REFUSED towards a model
+    personne: data about a person — REFUSED towards a model
+    image: an image — REFUSED towards a model
+allowed_effects:
+- read
+- network
+- display
+- record
+- write
+- deploy
+- device
+extensions:
+- stilhawt_cli.ext_groq
+pipes:
+  where:
+    description: keeps objects matching a condition on ONE key
+    usage: 'where <key> <op> <value> — op: gt lt ge le eq ne contains (or > < >= <= = != ~); dotted keys:
+      margin.cores_free'
+    alias:
+    - filter
+    effect: read
+  grep:
+    description: keeps objects where ANY value contains a text (grep on the row)
+    usage: grep <text> · grep -v <text> (inverse) — case-insensitive
+    effect: read
+  select:
+    description: keeps only some keys
+    usage: select <key> [<key>…]
+    effect: read
+  sort:
+    description: sorts on one key (prefix - for descending)
+    usage: sort [-]<key>
+    effect: read
+  head:
+    description: the first n objects
+    usage: head <n>
+    effect: read
+  count:
+    description: the number of objects
+    usage: count
+    alias:
+    - wc
+    effect: read
+  tee:
+    description: 'gives the SAME objects to several branches and returns their results concatenated, each
+      tagged `tee: n` (the tag wins over a domain field) — a branch is a sub-pipeline in parentheses;
+      `()` passes objects through. Grammar, not a function: the whole tree is checked before anything
+      runs (`explain <line>` shows it). No loop, no recursion: every line terminates, its cost is known
+      in advance.'
+    usage: tee (<pipes>) (<pipes>) … — e.g. `tools commands | tee (where kind eq command | count) (where
+      kind eq pipe | count)`
+    effect: read
+  map:
+    description: 'applies its group to EACH object alone and concatenates the results (a flatMap). With
+      a model inside, one call per object: the bound below is what keeps that finite — a per-object model
+      pipe no longer sees the whole list, so its own bound alone would not.'
+    usage: map (<pipes>) — e.g. `tools commands | head 5 | map (select name | groq "one word")`
+    effect: read
+    max_objects: 50
+  each:
+    description: 'runs ONE read command per object, `{}` replaced by the object''s `key` (like `find -exec`),
+      results tagged `each: <value>`. A value is data: one starting with `-` is refused, never a flag.
+      N objects = N command runs — hence the bound, and an agent needs the command granted. READ commands
+      only (the static gate refuses a `network` or acting one, before anything runs): so the bound can
+      walk a whole inventory, every project of a workspace (2026-09-29, was 20).'
+    usage: each <key> (<command> … {} … [| <pipes>]) — e.g. `snip uses | group session | each session
+      (snip uses --session {})`
+    effect: read
+    max_objects: 200
+  flatten:
+    description: an object whose key is a LIST becomes one object per element (an empty list drops it)
+    usage: flatten <key> — e.g. `tools commands | flatten options`
+    effect: read
+  extract:
+    description: 'sed-like capture into FIELDS: each NAMED group of the regex becomes a key (`(?P<line>\d+)`
+      → `line`); no match → the keys are null. Deterministic, no model — parse text with a tool.'
+    usage: extract <key> "<regex with (?P<name>…) groups>" — e.g. `tools commands | extract description
+      "^(?P<first>\w+)"`
+    effect: read
+  replace:
+    description: 'sed''s substitution on ONE field — every match of the regex replaced (groups `\1` or
+      `\g<name>`), back into the key or into `--into <newkey>` to keep the original. The capture half
+      of sed is `extract`. Deterministic, no model (2026-09-27: the sed of the CLI)'
+    usage: replace <key> "<regex>" ["<replacement>"] [--into <newkey>] (no replacement deletes) — e.g.
+      `tools commands | replace name "_" "-" --into slug`
+    effect: read
+  lines:
+    description: 'wc -l on ANY stream — the number of lines of a field''s text, or with `--file` of the
+      file the field names (inside the workspace, read-only, 50 MB max); adds `lines`, null when unreadable.
+      A GLOBAL pipe: any command''s objects, not only files (2026-09-27)'
+    usage: lines <key> [--file] — e.g. `tools commands | lines description | sort -lines | head 5`
+    effect: read
+  join:
+    description: 'POPS the results a `tee` pushed and merges them by key — reverse Polish notation: `tee
+      (A) (B)` pushes two results (its branches run concurrently), `join` combines them. One object per
+      key value, the fields of every branch that had it, `branches` saying which; a field two branches
+      disagree on is kept twice (`<field>@<branch>`), never overwritten. `--inner`: only keys every branch
+      has (CLI-PLAN H10, 2026-09-27)'
+    usage: join <key> [--inner] — e.g. `snip list | tee (where status eq active) (where uses gt 0) | join
+      id --inner`
+    effect: read
+  group:
+    description: one object per distinct value of a key, with `n` and optional aggregates, largest first
+      — a count the TOOL makes, so nobody (human or model) counts rows by eye
+    usage: group <key> [sum|avg|min|max <field>]… — e.g. `snip list | group status sum uses`
+    alias:
+    - distinct
+    effect: read
+  sum:
+    description: the sum of a numeric field — `n` numeric values used, `skipped` the others (a bool is
+      not a number)
+    usage: sum <field>
+    effect: read
+  avg:
+    description: the mean of a numeric field (`n` used, `skipped` the others)
+    usage: avg <field>
+    effect: read
+  min:
+    description: the smallest value of a numeric field
+    usage: min <field>
+    effect: read
+  max:
+    description: the largest value of a numeric field
+    usage: max <field>
+    effect: read
+  view:
+    description: 'draws the objects with a FIXED template — a table, bars, the execution tree, a DOCUMENT
+      (a text field rendered as Markdown), or ANY stream as a GRF graph — writes it under data\cli\ and
+      opens it. Without a layout it PICKS from the data (one object carrying a long text → doc; rows of
+      `explain` → tree; otherwise a table) and says so on the page; naming a layout forces it. Every value
+      is escaped and the CSP forbids the network: nothing in the data (a model''s text included) can run
+      or send anything. Table and bars carry no script; tree and graph inline GRF''s Cytoscape engine
+      (elements passed as JSON). Graph options: `--engine cytoscape|svg|mermaid|drawio` (GRF''s engines
+      — mermaid and drawio write a FILE to paste in a .md or open in draw.io), `--mode auto|contains|edges`
+      (contains: each source frames its targets, refused if a target has two sources). Returns where it
+      is.'
+    usage: view (auto) | view table | view doc [<text key>] | view bar <label> <number> | view tree (after
+      `explain … --json`) | view graph <source> <target> [--engine cytoscape|svg|mermaid|drawio] [--mode
+      auto|contains|edges] [--title "…"] — e.g. `tools commands | view graph namespace name --engine mermaid`
+    effect: display
+  diff:
+    description: 'what changed since the previous run of the same line: rows `added` · `removed` · `changed`
+      (with the fields, old → new), joined by a KEY, never by position. Then records the current run as
+      the new snapshot (`--no-save` to compare only). The first run records a baseline.'
+    usage: diff <name> --key <key> [--no-save] — e.g. `snip list | diff snippets --key id`
+    effect: record
+  open:
+    description: opens the files the objects name, in the editor, at their line (Notepad++ when present,
+      `STILHAWT_EDITOR` to choose) — at most 5; a path outside the workspace is refused
+    usage: open [--file <key>] [--line <key>] — opens the files the objects name, inside the current project
+    effect: display
+  notify:
+    description: 'ONE local desktop notification through stilhawt-async-gate — nothing leaves the machine,
+      it is never a message to anyone. The gate answers before the OS shows it: `requested`, not `shown`.'
+    usage: notify "<title>" — a local notification (says `not sent` when no notifier answers)
+    effect: display
+  groq:
+    description: asks Groq (fast, cheap, GENERATES text) for one short line per object, added as `groq`
+      — or, with `--all`, ONE answer for the whole set. The text is data, never executed, cut at 300 characters.
+      Your key (GROQ_API_KEY); the egress guard refuses raw data, people and images.
+    usage: groq "<question>" [--all] [--on key,key] [--pan texte|code] [--max 50]
+    effect: network
+    mode: generate
+    transport: groq
+    delegate: groq
+    egress:
+      contract: ext_groq
+      destination: groq
+    max_objects: 50
+namespaces:
+  tools:
+    description: the conforming tools of the workspace — found by their format in the code, described
+      by themselves (`--describe`, a separate process), joined to the command that maps each. An `unmapped`
+      verb is a command the grammar does not offer yet (`python -m stilhawt_cli.tool generate <module>
+      <namespace>` writes its entry)
+    home: stilhawt_cli/tool.py
+    export: client
+    commands:
+      list:
+        description: every conforming tool, its verbs (what each does, input, typed output, effect) and
+          the command mapping it
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.tool:list
+        timeout_s: 180
+        output:
+        - module
+        - verb
+        - does
+        - mapped_to
+        display:
+          columns:
+          - module
+          - verb
+          - effect
+          - mapped_to
+          - does
+      commands:
+        description: 'the CLI''s own grammar AS DATA — one row per command and pipe (namespace, name,
+          effect, options read at their source, description) — so it pipes: `tools commands | view graph
+          namespace name` draws the CLI itself; `help` is the same grammar printed for a human'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.tool:commands
+        output:
+        - namespace
+        - name
+        - kind
+        - effect
+        display:
+          columns:
+          - namespace
+          - name
+          - kind
+          - effect
+          - options
+          - description
+          formats:
+            options: compact
+  snip:
+    description: the agents' SNIPPET library (contract SNP) — named lines for recurring use cases, run
+      as `stilhawt @<id> [| pipes]`; every run is recorded with its conversation, Jev suggests one per
+      prompt (hook delegues_juge). `explain @<id>` shows the expanded line without running it.
+    home: stilhawt_cli/snippets/__init__.py
+    export: internal
+    commands:
+      list:
+        description: every snippet — its intent, its line, how many times it was run
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.snippets:list
+        output:
+        - id
+        - status
+        - uses
+        display:
+          columns:
+          - id
+          - uses
+          - intent
+          - line
+      uses:
+        description: every recorded run of a snippet — when, which conversation, how many rows, ok or
+          refused
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.snippets:uses
+        output:
+        - ts
+        - id
+        - ok
+        display:
+          columns:
+          - ts
+          - id
+          - rows
+          - ok
+          - session
+          formats:
+            ts: datetime
+            ok: check

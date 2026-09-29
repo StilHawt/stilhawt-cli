@@ -1,0 +1,307 @@
+version: 2
+trigramme: GRF
+pivot:
+  noeud_requis:
+  - id
+  - label
+  - genre
+  arete_requise:
+  - id
+  - de
+  - vers
+genres:
+  groupe:
+    label: groupe
+    forme: rectangle_arrondi
+    conteneur: true
+    epaisseur: 2
+    contour: plein
+  perimetre:
+    label: périmètre — non évalué
+    forme: rectangle_arrondi
+    conteneur: true
+    epaisseur: 2
+    contour: tirets
+  bloc:
+    label: composant
+    forme: rectangle
+    conteneur: false
+    contour: plein
+  table:
+    label: table / entité
+    forme: rectangle
+    conteneur: false
+    contour: plein
+  stockage:
+    label: dépôt de données
+    forme: cylindre
+    conteneur: false
+    contour: plein
+  decision:
+    label: décision
+    forme: losange
+    conteneur: false
+    contour: plein
+  externe:
+    label: système tiers
+    forme: hexagone
+    conteneur: false
+    contour: tirets
+  inconnu:
+    label: cible non déclarée
+    forme: losange
+    conteneur: false
+    contour: tirets
+types_arete:
+  flux:
+    label: flux
+    trait: plein
+    fleche: classique
+    couleur: '#8a93a2'
+  reference:
+    label: référence / écrit
+    trait: plein
+    fleche: creuse
+    couleur: '#4a7bd0'
+  derive:
+    label: dérive de
+    trait: pointille
+    fleche: classique
+    couleur: '#8a7bd0'
+  alerte:
+    label: alerte
+    trait: pointille
+    fleche: classique
+    couleur: '#3ecf8e'
+  lecture:
+    label: lecture seule
+    trait: tirets
+    fleche: creuse
+    couleur: '#8a93a2'
+  indetermine:
+    label: aboutit où ? — non déclaré
+    trait: pointille
+    fleche: creuse
+    couleur: '#d06a6a'
+etats:
+  ok:
+    couleur: '#3ecf8e'
+    label: conforme
+  attention:
+    couleur: '#c9a94a'
+    label: à surveiller
+  probleme:
+    couleur: '#d06a6a'
+    label: écart
+  absent:
+    couleur: '#6b7280'
+    label: déclaré mais absent
+  non_declare:
+    couleur: '#b06a9c'
+    label: rien de déclaré
+  neutre:
+    couleur: '#8a93a2'
+    label: —
+provenances:
+  declare:
+    couleur: '#c9a94a'
+    label: déclaré — arbitré à la main
+  registre:
+    couleur: '#8a7bd0'
+    label: registre — dérivé d'un contrat versionné
+  deploye:
+    couleur: '#3ecf8e'
+    label: déployé — lu sur ce qui tourne
+dispositions:
+  couches:
+    label: En couches (croisements minimisés)
+    methode: sugiyama
+    defaut: true
+    phases:
+    - acyclique
+    - rangs
+    - ordre_mediane
+    - abscisses_barycentre
+    note: 'La phase `acyclique` n''est pas optionnelle : le plus long chemin n''est défini que sur un
+      graphe sans cycle. Mesuré le 23/09 sur le schéma Frequencies — UN seul cycle (poles ⇄ personnes)
+      donnait 45 couches pour 20 tables et PLUS de croisements qu''au départ.'
+  colonnes:
+    label: Colonnes (conteneurs)
+    methode: colonnes_barycentre
+    note: 'Pour un graphe à conteneurs (un parent et ses enfants) : les layouts de force font CHEVAUCHER
+      les boîtes parentes. Colonnes à gauche, cibles à droite ordonnées par barycentre de leurs sources.'
+  grille:
+    label: Grille
+    methode: grille
+    note: Mise en place, sans optimisation. Pour un graphe sans arête ou pour comparer.
+geometrie:
+  dx: 280
+  dy: 150
+  balayages: 10
+  orientation: auto
+  noeud:
+    largeur_min: 120
+    largeur_max: 250
+    hauteur: 38
+    hauteur_ligne: 15
+    marge_texte: 16
+  groupe:
+    marge: 16
+    hauteur_titre: 26
+  pile:
+    pas: 62
+    ecart_colonnes: 70
+    hauteur_max: 900
+    ecart_groupes: 90
+moteurs:
+  cytoscape:
+    defaut: true
+    sortie: json
+    besoin_positions: true
+    note: 'Éléments Cytoscape avec `position` — le navigateur passe en `layout: preset` et n''a plus AUCUNE
+      logique de disposition. Il peint et il interagit.'
+    formes:
+      rectangle: rectangle
+      rectangle_arrondi: round-rectangle
+      cylindre: barrel
+      losange: diamond
+      hexagone: hexagon
+    traits:
+      plein: solid
+      pointille: dotted
+      tirets: dashed
+    fleches:
+      classique: triangle
+      creuse: triangle-tee
+    geometrie:
+      respecte: taille_servie
+      marge_feuille: 0
+      marge_groupe: geometrie.groupe.marge
+      plancher_sur_feuille: false
+  svg:
+    sortie: texte
+    besoin_positions: true
+    note: Rendu COMPLET sans navigateur — c'est la preuve que la disposition est bien sortie du JS. Sert
+      un rapport, un courriel, un PDF, une page statique.
+    formes:
+      rectangle: rect
+      rectangle_arrondi: rect_arrondi
+      cylindre: cylindre
+      losange: losange
+      hexagone: hexagone
+    traits:
+      plein: none
+      pointille: 2 3
+      tirets: 7 4
+    fleches:
+      classique: pleine
+      creuse: creuse
+    geometrie:
+      respecte: dessine_directement
+  mermaid:
+    sortie: texte
+    besoin_positions: false
+    note: Sortie texte, lisible en revue de code et collable dans un .md. Mermaid place seul.
+    formes:
+      rectangle: '[]'
+      rectangle_arrondi: ()
+      cylindre: '[()]'
+      losange: '{}'
+      hexagone: '{{}}'
+    traits:
+      plein: -->
+      pointille: -.->
+      tirets: -.->
+    geometrie:
+      respecte: place_lui_meme
+  drawio:
+    sortie: xml
+    besoin_positions: true
+    note: Rend un .drawio ÉDITABLE — le format que les clients manipulent déjà.
+    formes:
+      rectangle: rounded=0
+      rectangle_arrondi: rounded=1
+      cylindre: shape=cylinder3
+      losange: rhombus
+      hexagone: shape=hexagon
+    traits:
+      plein: ''
+      pointille: dashed=1;dashPattern=1 3
+      tirets: dashed=1
+    geometrie:
+      respecte: taille_servie
+      marge_feuille: 0
+golden:
+  must_fail:
+    noeud_sans_genre:
+      motif: champ(s) requis manquant(s)
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+        aretes: []
+    genre_hors_vocabulaire:
+      motif: hors vocabulaire
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+          genre: barrel
+        aretes: []
+    arete_pendante:
+      motif: ne désigne aucun nœud
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+          genre: bloc
+        aretes:
+        - id: e1
+          de: a
+          vers: fantome
+    identifiant_en_double:
+      motif: identifiant en double
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+          genre: bloc
+        - id: a
+          label: A bis
+          genre: bloc
+        aretes: []
+    parent_inconnu:
+      motif: parent 'nulle_part' inconnu
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+          genre: bloc
+          parent: nulle_part
+        aretes: []
+    type_arete_non_declare:
+      motif: non déclaré
+      graphe:
+        noeuds:
+        - id: a
+          label: A
+          genre: bloc
+        - id: b
+          label: B
+          genre: bloc
+        aretes:
+        - id: e1
+          de: a
+          vers: b
+          type: teleportation
+    conteneur_vide:
+      motif: AUCUN enfant
+      graphe:
+        noeuds:
+        - id: g
+          label: Groupe
+          genre: groupe
+        - id: a
+          label: A
+          genre: bloc
+        aretes: []
