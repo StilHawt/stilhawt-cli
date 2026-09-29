@@ -141,6 +141,22 @@ def _default_data_dir(sub: str):
     return d
 
 
+_NOTIFIER: list = []
+
+
+def notifier(fn=None):
+    """Register HOW `notify` shows a local notification: `fn(title, body) -> str` (the state, said —
+    « requested », « refused »…), or, called bare, return the one in force (None: nobody registered,
+    `notify` answers « not sent » and names this extension point). The workspace's gateway was
+    hardcoded in the engine and leaked its port into the public package (2026-09-29)."""
+    if fn is None:
+        return _NOTIFIER[0] if _NOTIFIER else None
+    if _NOTIFIER and _NOTIFIER[0] is not fn and _NOTIFIER[0].__qualname__ != fn.__qualname__:
+        raise Refusal(f"a notifier is already registered ({_NOTIFIER[0].__module__}): one place")
+    _NOTIFIER[:] = [fn]
+    return fn
+
+
 def data_path(sub: str):
     """The directory for `sub`, created: the registered place, else the default."""
     return data_dir()(sub)

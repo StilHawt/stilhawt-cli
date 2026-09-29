@@ -1,0 +1,8 @@
+# What `pip install .` and running the tests leave behind
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -69,7 +69,12 @@ EXCLUDED = {".git", "node_modules", ".venv", "venv", "build", "dist", "data", "_
 
 
 def workspace_root() -> Path:
-    """Env > `.env.workspace` sentinel walking up > SDK parent. Never a hardcoded path."""
+    """Env > `.env.workspace` sentinel walking up > the CALLER's directory. Never a hardcoded path.
+
+    The last fallback was the package's own location (three levels up): installed, that is
+    site-packages' grandparent; run from a clone, it was `/` — and `open` then called every path
+    « inside the workspace » (the selftest failed only from the clone, found by a blank tester,
+    2026-09-29). Without a declared workspace, the project is where the user stands."""
     env = os.environ.get("STILHAWT_WORKSPACE_ROOT") or os.environ.get("STILHAWT_WORKSPACE")
     if env:
         return Path(env)
@@ -77,7 +82,7 @@ def workspace_root() -> Path:
         for p in (base, *base.parents):
             if (p / ".env.workspace").is_file():
                 return p
-    return HERE.parent.parent.parent
+    return Path(os.environ.get(CALLER_CWD) or Path.cwd())
 
 
 
@@ -324,7 +329,8 @@ def kind_command(c: dict, root: Path, args: list[str]) -> list[dict]:
         msg = (r.stderr or r.stdout or "").strip()
         if len(msg) > 420:
             msg = msg[:210] + " … " + msg[-200:]
-        raise Refusal(f"home tool failed ({r.returncode}): {msg}")
+        # « home tool » was our jargon; a reader needs the command and what it said (2026-09-29).
+        raise Refusal(f"the command failed (exit {r.returncode}): {msg}")
     objects = []
     for l in (r.stdout or "").splitlines():
         if not l.strip():
@@ -437,7 +443,7 @@ def kind_derived(c: dict, root: Path, args: list[str]) -> list[dict]:
     unknown = asked - {x["trigram"] for x in runnable}
     if unknown:
         raise Refusal(f"trigram(s) without a findable engine: {sorted(unknown)} — "
-                      f"`stilhawt gov contracts` shows which are")
+                      "the registry of contracts says which are")
     # Cardinality N: a trigram carried by two DSLs runs both (the output names the file).
     targets = runnable if "--all" in args else [x for x in runnable if x["trigram"] in asked]
     if not targets:
@@ -550,7 +556,12 @@ def pipe_where(objects, args):
                        f"where {keys[0] if keys else 'key'} gt 0")
         raise Refusal(f"`where` needs a condition <key> <op> <value> — keys here: {', '.join(keys) or '(none)'} "
                       f"· op: gt lt ge le eq ne contains · e.g. `{example}` · text anywhere: `grep <text>`")
-    return [o for o in objects if predicate(args)(o)]
+    kept = [o for o in objects if predicate(args)(o)]
+    # A key NO object carries is a typo, not an empty answer: said on stderr, the stream stays empty
+    # (a filter that keeps nothing is a legitimate result — a key that exists nowhere is not).
+    if objects and not kept and all(get(o, args[0]) is None for o in objects):
+        print(f"where: no object carries `{args[0]}` — keys here: {', '.join(_keys_of(objects)[:14])}", file=sys.stderr)
+    return kept
 
 
 def pipe_grep(objects, args):
@@ -591,7 +602,11 @@ def pipe_head(objects, args):
         n = int(args[0]) if args else 10
     except ValueError:
         raise Refusal(f"`head` takes a number, not '{args[0]}'") from None
-    return objects[:max(0, n)]
+    if n < 1:
+        # `head -1` is the Unix reflex (« all but the last »): it silently returned nothing (a blank
+        # tester, 2026-09-29). Zero or less is never what was meant.
+        raise Refusal(f"`head` takes a count of 1 or more, not {n} — `head 1` for the first object")
+    return objects[:n]
 
 
 def pipe_count(objects, args):
@@ -721,7 +736,7 @@ def pipe_replace(objects, args):
         words.append("")                # survive every shell: two words are the explicit form)
     if len(words) != 3:
         raise Refusal('`replace <key> "<regex>" ["<replacement>"] [--into <newkey>]` — no replacement deletes; '
-                      'e.g. `ws search TODO | replace text "\\s+" " "`')
+                      'e.g. `fs search TODO | replace text "\\s+" " "`')
     key, pattern, repl = words
     if len(pattern) > EXTRACT_MAX_PATTERN:
         raise Refusal(f"`replace` pattern longer than {EXTRACT_MAX_PATTERN} characters")
@@ -749,7 +764,7 @@ def pipe_lines(objects, args):
     `lines` to each object; a missing or unreadable file is a stated null, not a dropped row."""
     words = [a for a in args if a != "--file"]
     if len(words) != 1:
-        raise Refusal("`lines <key> [--file]` — e.g. `ws search TODO | lines text` · `tools list | lines module --file`")
+        raise Refusal("`lines <key> [--file]` — e.g. `fs search TODO | lines text` · `tools list | lines module --file`")
     key, as_file = words[0], "--file" in args
     root = workspace_root().resolve()
     out = []
@@ -1133,7 +1148,7 @@ GRAPH_MODES = ("auto", "contains", "edges")
 def data_graph(objects: list[dict], src: str, dst: str, mode: str = "auto") -> dict:
     """ANY stream → a GRF pivot graph: every distinct value of `src` is a box (`bloc`), every
     distinct value of `dst` a table (`table`), one edge per distinct (src → dst) pair. PURE.
-    A value that is a list gives one edge per element (so `fleet map | view graph node apps`
+    A value that is a list gives one edge per element (so `tools commands | view graph name options`
     works without a flatten). Objects missing either key are skipped and COUNTED."""
     nodes: dict[tuple, dict] = {}
     edges: dict[tuple, dict] = {}
@@ -1317,7 +1332,7 @@ def pipe_view(objects, args):
                 keys += [k for k in o if k not in keys]
             raise Refusal("`view graph <source key> <target key>` — which key groups, which key is grouped; "
                           f"the objects here carry: {', '.join(keys[:14]) or '(no object)'} — "
-                          "e.g. `fleet map | view graph node apps`")
+                          "e.g. `tools commands | view graph namespace command --mode contains`")
         label, value = parts[1], parts[2]
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     if layout == "graph" and engine in ("mermaid", "drawio"):
@@ -1478,17 +1493,10 @@ def pipe_notify(objects, args):
     body = f"{len(objects)} object(s)" + ("\n" + "\n".join(lines) if lines else "")
     if os.environ.get("STILHAWT_VIEW_NO_OPEN") in ("1", "true", "yes"):
         return [{"notify": title, "n": len(objects), "state": "not sent (STILHAWT_VIEW_NO_OPEN)"}]
-    import urllib.request
-    port = int(os.environ.get("STILHAWT_ASYNC_GATE_PORT", "8780"))
-    req = urllib.request.Request(f"http://127.0.0.1:{port}/notify", method="POST",
-                                 data=json.dumps({"title": title[:256], "body": body[:1024]}).encode("utf-8"),
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            ok = json.loads(r.read() or b"{}").get("ok")
-        state = "requested (the gate cannot confirm it was shown)" if ok else "refused by the gate"
-    except OSError as e:
-        state = f"gate unreachable on :{port} ({getattr(e, 'reason', e)})"
+    from stilhawt_cli import ext
+    show = ext.notifier()
+    state = (show(title[:256], body[:1024]) if show else
+             "not sent: no notifier registered (extension point `ext.notifier`)")
     return [{"notify": title, "n": len(objects), "state": state}]
 
 
@@ -1544,8 +1552,24 @@ def _ai_gate(name: str, objects: list, args: list[str], ctx: dict) -> dict:
     # Never an empty one — DEX fails closed without a mandate, and that refusal must say why.
     if not os.environ.get("STILHAWT_MANDAT") and spec.get("default_mandate"):
         os.environ["STILHAWT_MANDAT"] = spec["default_mandate"]
+    keys = [k for k in (flags.get("on") or "").split(",") if k] or None
+    # `--on` is THE promise « you choose what leaves »: a field no object carries is a typo, and the
+    # call went out anyway with nulls (a blank tester, 2026-09-29). Refused before anything leaves.
+    missing = [k for k in keys or [] if objects and all(get(o, k) is None for o in objects)]
+    if missing:
+        have = _keys_of(objects)[:14]
+        # Two different facts: the field EXISTS but is empty everywhere (a previous model answered
+        # nothing — its `<name>_refused` says why), or it exists nowhere (a typo). The first message
+        # said « no object carries `groq` » right above a list containing `groq` (2026-09-29).
+        empty = [k for k in missing if k in have]
+        if empty:
+            why = next((str(o.get(f"{empty[0]}_refused")) for o in objects if o.get(f"{empty[0]}_refused")), None)
+            raise Refusal(f"`{name} --on {','.join(empty)}`: every value is empty (null) — nothing was sent"
+                          + (f"; the stage that filled it answered nothing: {why}" if why else ""))
+        raise Refusal(f"`{name} --on {','.join(missing)}`: no object carries {'this field' if len(missing) == 1 else 'these fields'} "
+                      f"— nothing was sent; the objects here carry: {', '.join(have) or '(none)'}")
     return {"question": question, "flags": flags, "pan": pan, "calls": calls,
-            "keys": [k for k in (flags.get("on") or "").split(",") if k] or None,
+            "keys": keys,
             "destination": (spec.get("egress") or {}).get("destination") or name,
             # THE egress guard an extension registered — none registered: everything is refused.
             "anonymise": ctx.get("anonymise") or _ext_guard(ctx.get("doc"))}
@@ -1680,7 +1704,7 @@ def pipe_generate(objects, args, ctx=None):
                 f"{anonymise(rows, pan, destination)}")
         text = r.get("reponse") if not r.get("refus") and isinstance(r.get("reponse"), str) else None
         return [{"n": len(objects), name: text.strip()[:WHOLE_MAX] if text else None,
-                 **({"refused": r["refus"]} if r.get("refus") else {})}]
+                 **({f"{name}_refused": r["refus"]} if r.get("refus") else {})}]
 
     def one(o: dict) -> dict:
         r = ask(f"{ONE_LINE}\n\nQUESTION: {question}\n\nDATA:\n{anonymise(phrase_of(o, keys, drop), pan, destination)}")
@@ -1690,7 +1714,36 @@ def pipe_generate(objects, args, ctx=None):
         return list(pool.map(one, objects))
 
 
-MODE_FUNCTIONS = {"decide": pipe_decide, "generate": pipe_generate}
+def refusal_note(name: str, rows: list[dict]) -> str | None:
+    """How many objects the model REFUSED or could not answer, and the first reason — None when all
+    were answered. PURE. Each refusal already travels in its object (`<name>_refused`, or
+    `<name>.refused`); this line is for the human, on stderr: without it `| select id groq` showed
+    twelve nulls, exit 0, and no word of why (a blank tester without a key, 2026-09-29)."""
+    reasons = []
+    for r in rows:
+        v = r.get(name)
+        why = r.get(f"{name}_refused") or r.get("refused") or (v.get("refused") if isinstance(v, dict) else None)
+        if why:
+            reasons.append(str(why))
+    if not reasons:
+        return None
+    return f"{name}: {len(reasons)}/{len(rows)} object(s) not answered — {reasons[0]}"
+
+
+_SELFTESTING = False
+
+
+def _say_refusals(name: str, rows: list[dict]) -> list[dict]:
+    note = refusal_note(name, rows)
+    # Silent under the selftest only: its fixtures refuse ON PURPOSE, and two alarming lines before
+    # « 253/253 passed » read as a failure to a newcomer (a blank tester, 2026-09-29).
+    if note and not _SELFTESTING:
+        print(note, file=sys.stderr)
+    return rows
+
+
+MODE_FUNCTIONS = {"decide": lambda o, a, c=None: _say_refusals((c or {}).get("name", ""), pipe_decide(o, a, c)),
+                  "generate": lambda o, a, c=None: _say_refusals((c or {}).get("name", ""), pipe_generate(o, a, c))}
 
 # The PURE pipes: they know nothing of models. AI pipes are not listed here — they come from the
 # grammar (`pipes.<name>.mode`), which is the whole point: a model is a DSL entry, not code.
@@ -2057,6 +2110,11 @@ def columns_for(objects: list[dict], disp: dict, output: list[str] | None,
     where/sort/head); after select or count it no longer does: show its own keys."""
     declared = disp.get("columns") or output
     if objects and declared and output and all(k in objects[0] for k in output):
+        if not disp.get("columns"):
+            # `output` is what the command GUARANTEES, not all it gives: `data read` promises `row` and
+            # carries the file's columns — the table showed `row` alone (a blank tester, 2026-09-29).
+            # Only declared display columns are a CHOICE to show fewer.
+            return list(declared) + [k for k in _keys_of(objects) if k not in declared]
         # A field ADDED by an AI pipe (`jev`) is shown even though the command did not declare it.
         added = [k for k in objects[0] if k in ai and k not in declared]
         return list(declared) + added
@@ -2256,7 +2314,7 @@ def mandate_grievances(doc: dict, segs: list[list[str]], mandate_id: str | None,
 
 def run_line(doc: dict, tokens: list[str], profile: str = "local",
              stdin_objects: list[dict] | None = None) -> tuple[list[dict], dict | None]:
-    """A line, after expanding a SNIPPET at its head (`@dirty | count`, contract SNP).
+    """A line, after expanding a SNIPPET at its head (`@loc | head 3`, contract SNP).
 
     The expansion is one step, and every run of a snippet is RECORDED — success or refusal, a
     failure is a measure too — with its conversation (`CLAUDE_CODE_SESSION_ID`). `explain @x`
@@ -2477,6 +2535,8 @@ def shell(doc: dict, profile: str = "local", script=None) -> int:
 # ───────────────────────────── selftest ─────────────────────────────
 
 def _selftest() -> int:
+    global _SELFTESTING
+    _SELFTESTING = True
     import contextlib
     import copy
     import io
@@ -2711,6 +2771,33 @@ def _selftest() -> int:
     refused = apply_pipes(projs[:1], [["groq", "q"]], net, {**gctx, "ask": lambda p: {"refus": "mandate"}})
     check("a refused call is stated, never an empty answer",
           (refused[0]["groq"], refused[0].get("groq_refused")), (None, "mandate"))
+    check("MUST-FAIL a refusal is also SAID for the human (stderr), with the count and the reason",
+          (refusal_note("groq", refused), refusal_note("groq", per)), ("groq: 1/1 object(s) not answered — mandate", None))
+    prompts.clear()
+    refuses("MUST-FAIL `--on` naming a field no object carries is refused, and nothing is sent",
+            lambda: apply_pipes(projs, [["groq", "q", "--on", "nosuchfield"]], net, gctx), "no object carries")
+    check("... not one call went out", prompts, [])
+    refuses("MUST-FAIL a field that EXISTS but is empty everywhere says so, and why — not « no object carries it »",
+            lambda: apply_pipes([{"id": 1, "groq": None, "groq_refused": "no key"}],
+                                [["jev", "q", "--options", "a,b", "--on", "groq"]], net, ctx), "every value is empty")
+    refuses("MUST-FAIL `head` of zero or less is refused (the Unix `head -1` reflex returned nothing)",
+            lambda: pipe_head([{"a": 1}], ["-1"]), "1 or more")
+    check("a whole line in ONE quoted argument is split like the shell inside `stilhawt`",
+          one_line_argv(["tools commands | count", "--json"]), ["tools", "commands", "|", "count", "--json"])
+    check("MUST-FAIL ... but a quoted value among other words stays one argument",
+          one_line_argv(["fs", "search", "two words"]), ["fs", "search", "two words"])
+    # The README promises Tab completion with the `shell` extra: no blank tester can press Tab (no
+    # terminal), so the completer is exercised here — played only where prompt_toolkit is installed.
+    try:
+        from prompt_toolkit.document import Document as _Doc
+    except ImportError:
+        _Doc = None
+    if _Doc is not None:
+        _comp = _completer(base, "local")
+        _ns = next(iter(base.get("namespaces") or {}))
+        check("the shell completes a namespace, then a pipe after `|`",
+              (_ns in [x.text for x in _comp.get_completions(_Doc(_ns[:2]), None)],
+               "where" in [x.text for x in _comp.get_completions(_Doc(f"{_ns} x | wh"), None)]), (True, True))
     refuses("`jev --all` is refused (jev decides per object)",
             lambda: apply_pipes(projs, [["jev", "q", "--all", "--options", "a,b"]], net, ctx), "generate pipe")
 
@@ -2770,6 +2857,10 @@ def _selftest() -> int:
           [r"^(?P<first>\w+)", "^(feat|fix)/"])
     check("... while a glued group still splits: `(count)|head`", lex(["(count)|head", "3"]),
           ["(", "count", ")", "|", "head", "3"])
+    check("MUST-FAIL a QUOTED regex that is wholly a group, with a space, stays one argument",
+          lex(["extract", "text", r"(?P<w>\w+ \w+)"])[-1], r"(?P<w>\w+ \w+)")
+    check("... while a quoted BRANCH (PowerShell passes it whole) is still split",
+          lex(["tee", "(where x gt 0)"]), ["tee", "(", "where", "x", "gt", "0", ")"])
     # MUST-FAIL (regression, live 2026-09-25): `map (groq "…")` was refused as "not closed".
     check("MUST-FAIL a `)` right after a quote closes the group, it is not swallowed by the phrase",
           [n["op"] for n in parse_line(split_line('x y | map (groq "one word, what (is) it?")'))]
@@ -2841,10 +2932,23 @@ def _selftest() -> int:
     refuses("MUST-FAIL replace with a pattern that does not compile", lambda: pipe_replace([{"a": "x"}], ["a", "(", "y"]), "does not compile")
     # wc -l on any stream
     check("lines of a text field", pipe_lines([{"t": "a\nb\nc"}], ["t"])[0]["lines"], 3)
-    here = Path(__file__).resolve()
-    check("lines --file of a workspace file", (pipe_lines([{"f": str(here)}], ["f", "--file"])[0]["lines"] or 0) > 100, True)
-    check("MUST-FAIL lines --file outside the workspace is a null, never a read",
-          pipe_lines([{"f": str(Path.home() / ".ssh" / "id_ed25519")}], ["f", "--file"])[0]["lines"], None)
+    # A DECLARED root, a fixture: the case held only while the root fallback was the package's own
+    # location (it is now where the user stands).
+    import tempfile as _tf_lines
+    _saved_lines_root = os.environ.get("STILHAWT_WORKSPACE_ROOT")
+    with _tf_lines.TemporaryDirectory() as _lr:
+        (Path(_lr) / "f.txt").write_text("a\n" * 120, encoding="utf-8")
+        os.environ["STILHAWT_WORKSPACE_ROOT"] = _lr
+        try:
+            check("lines --file of a workspace file",
+                  pipe_lines([{"f": str(Path(_lr) / "f.txt")}], ["f", "--file"])[0]["lines"], 120)
+            check("MUST-FAIL lines --file outside the workspace is a null, never a read",
+                  pipe_lines([{"f": str(Path.home() / ".ssh" / "id_ed25519")}], ["f", "--file"])[0]["lines"], None)
+        finally:
+            if _saved_lines_root is None:
+                os.environ.pop("STILHAWT_WORKSPACE_ROOT", None)
+            else:
+                os.environ["STILHAWT_WORKSPACE_ROOT"] = _saved_lines_root
     check("tee branches run concurrently yet push in branch order",
           [o["tee"] for o in run_nodes(repos, parse_line(["tee", "(count)", "(count)", "(count)"]), base, None)], [1, 2, 3])
     check("MUST-FAIL a word that is neither a pipe nor a namespace in a branch is refused by the static gate",
@@ -3042,8 +3146,14 @@ def _selftest() -> int:
                 else:
                     os.environ[k] = v
     os.environ["STILHAWT_VIEW_NO_OPEN"] = "1"
+    import tempfile as _tf_open
+    _root_saved = os.environ.get("STILHAWT_WORKSPACE_ROOT")
+    _open_root = _tf_open.mkdtemp(prefix="open-root-")
+    # A DECLARED root, a fixture: the case must not depend on where the test runs (it failed from a
+    # clone, where the fallback root was `/`).
+    os.environ["STILHAWT_WORKSPACE_ROOT"] = str(Path(_open_root) / "a" / "b")
     try:
-        opened = pipe_open([{"file": "../../Windows/win.ini", "line": 1}, {"file": "nope/missing.py"}], [])
+        opened = pipe_open([{"file": "../../outside.txt", "line": 1}, {"file": "nope/missing.py"}], [])
         check("MUST-FAIL open refuses a path outside the workspace, and a missing file",
               [o["opened"] for o in opened], ["refused: outside the workspace", "refused: not a file"])
         refuses("MUST-FAIL open over its bound", lambda: pipe_open([{"file": f"f{i}"} for i in range(6)], []), "bound 5")
@@ -3051,6 +3161,26 @@ def _selftest() -> int:
               pipe_notify([{"a": 1}], ["t"])[0]["state"], "not sent (STILHAWT_VIEW_NO_OPEN)")
     finally:
         os.environ.pop("STILHAWT_VIEW_NO_OPEN", None)
+        if _root_saved is None:
+            os.environ.pop("STILHAWT_WORKSPACE_ROOT", None)
+        else:
+            os.environ["STILHAWT_WORKSPACE_ROOT"] = _root_saved
+        __import__("shutil").rmtree(_open_root, ignore_errors=True)
+    # Played only where no workspace is declared (the public package): here the sentinel answers first.
+    declared = _root_saved or os.environ.get("STILHAWT_WORKSPACE") or any(
+        (p / ".env.workspace").is_file() for base in (Path.cwd(), HERE) for p in (base, *base.parents))
+    if not declared:
+        with _tf_open.TemporaryDirectory() as stand:
+            saved_cc = os.environ.get(CALLER_CWD)
+            os.environ[CALLER_CWD] = stand
+            try:
+                check("MUST-FAIL without a declared workspace, the root is where the user stands — never the package's location",
+                      workspace_root().resolve(), Path(stand).resolve())
+            finally:
+                if saved_cc is None:
+                    os.environ.pop(CALLER_CWD, None)
+                else:
+                    os.environ[CALLER_CWD] = saved_cc
     refuses("MUST-FAIL an unknown option is refused, not ignored", lambda: pipe_open([], ["--fil", "x"]), "unknown option")
     check("MUST-FAIL `ok_codes` without 0 is refused (0 would become a failure)",
           any("ok_codes" in x for x in grievances(with_(["namespaces", "git", "commands", "status", "ok_codes"], [1]))), True)
@@ -3105,6 +3235,8 @@ def _selftest() -> int:
     check("declared columns while the object conforms",
           columns_for([{"repo": "a", "b": 1}], {"columns": ["repo", "b"]}, ["repo"]), ["repo", "b"])
     check("after select/count, the object's own keys", columns_for([{"n": 3}], {"columns": ["repo", "b"]}, ["repo"]), ["n"])
+    check("MUST-FAIL without display columns, `output` is a floor: the object's other keys are shown too",
+          columns_for([{"row": 1, "id": 7, "text": "x"}], {}, ["row"]), ["row", "id", "text"])
 
     # --- the shell in script mode: each line runs, a refusal does not stop the next ones ---
     out_shell = io.StringIO()
@@ -3259,10 +3391,52 @@ def _selftest() -> int:
 
 # ───────────────────────────── entry point ─────────────────────────────
 
+def one_line_argv(a: list[str]) -> list[str]:
+    """`stilhawt 'data read f | where x gt 1'` — a WHOLE line in one quoted argument (flags aside) is
+    split as the shell would split it inside `stilhawt`. PURE. In a real shell an unquoted `|` starts
+    another PROCESS: the README's lines, pasted, ran `jev: not found` (a blank tester, 2026-09-29)."""
+    words = [x for x in a if not x.startswith("--")]
+    if len(words) == 1 and any(ch.isspace() for ch in words[0]):
+        from stilhawt_cli.grammar import split_line
+        i = a.index(words[0])
+        return a[:i] + split_line(words[0]) + a[i + 1:]
+    return a
+
+
+def package_version() -> str:
+    """`<distribution> <version>` of the package this engine is installed from — read from the
+    installed metadata, never a constant to forget (`--version` did not exist: a blank tester,
+    2026-09-29). A source checkout that was never installed says so."""
+    from importlib import metadata
+    top = __name__.split(".")[0]
+    for dist in (metadata.packages_distributions().get(top) or []):
+        try:
+            return f"{dist} {metadata.version(dist)}"
+        except metadata.PackageNotFoundError:
+            continue
+    return f"{top} (not installed: run from a source tree)"
+
+
 def main(argv: list[str] | None = None) -> int:
+    """The entry point. A reader that closes the pipe early (`| head -2`) is not an error: Python's
+    « Exception ignored … BrokenPipeError » on exit was (a blank tester, 2026-09-29)."""
+    try:
+        code = _main(argv)
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        # The standard gesture (Python docs, « Note on SIGPIPE »): point stdout at devnull so the
+        # interpreter's final flush does not raise again.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        return 0
+
+
+def _main(argv: list[str] | None = None) -> int:
     a = list(sys.argv[1:] if argv is None else argv)
     if a[:1] == ["--selftest"]:
         return _selftest()
+    a = one_line_argv(a)
     profile = "local"
     if "--profile" in a:
         i = a.index("--profile")
@@ -3277,6 +3451,9 @@ def main(argv: list[str] | None = None) -> int:
     a = [x for x in a if x not in ("--json", "--text")]
     as_json = force_json or (not force_text and not sys.stdout.isatty())
     try:
+        if a[:1] == ["--version"]:
+            print(package_version())
+            return 0
         doc = load()
         if a[:1] == ["--check"]:
             from stilhawt_cli.tool import mapping_grievances

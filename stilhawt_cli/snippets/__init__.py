@@ -127,7 +127,7 @@ def options(doc: dict) -> dict[str, str]:
 
 
 def expand(tokens: list[str], doc: dict) -> tuple[list[str], str | None]:
-    """`@dirty | count` → (the snippet's line tokens + the rest, 'dirty'). ONE step. PURE.
+    """`@loc | head 3` → (the snippet's line tokens + the rest, 'loc'). ONE step. PURE.
     A token that does not start with `@` leaves the line untouched: (tokens, None)."""
     from stilhawt_cli.grammar import split_line
     if not tokens or not tokens[0].startswith("@"):

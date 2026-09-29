@@ -136,7 +136,10 @@ class Toolset:
             if w.startswith("--"):
                 a = opts.get(w)
                 if a is None:
-                    raise ToolRefusal(f"unknown option {w} for '{v.name}' — options: {', '.join(opts) or 'none'}")
+                    # The positionals too: « options: none » for `data read f.csv --bogus` read as « it
+                    # takes nothing », when it takes a <file> (a blank tester, 2026-09-29).
+                    takes = [*(f"<{a.dest}>" for a in pos), *opts]
+                    raise ToolRefusal(f"unknown option {w} for '{v.name}' — it takes: {' '.join(takes) or 'nothing'}")
                 if a.flag:
                     kw[a.dest] = True
                     i += 1
@@ -327,18 +330,20 @@ def discover(roots: list[Path] | None = None, doc: dict | None = None, describe=
     import subprocess
     here = Path(__file__).resolve().parents[1]           # the directory holding the CLI's package
     roots = roots or [here, *[Path(r) for r in os.environ.get("STILHAWT_TOOL_ROOTS", "").split(";") if r]]
-    rx = re.compile(r"""Toolset\(\s*["']([\w.]+)["']""")
     modules: dict[str, Path] = {}
     for root in roots:
         for f in sorted(Path(root).rglob("*.py")):
-            if "__pycache__" in f.parts or f.resolve() == Path(__file__).resolve():
+            # Build outputs are COPIES (`pip install .` leaves build/lib/…): a tool found there is a ghost.
+            # RELATIVE to the root: an installed package lives INSIDE a venv, and testing the absolute
+            # path skipped every tool (oss verify caught it, 2026-09-29).
+            if _SKIP_DIRS & set(f.relative_to(root).parts) or f.resolve() == Path(__file__).resolve():
                 continue
             try:
-                m = rx.search(f.read_text(encoding="utf-8", errors="replace"))
+                name = declared_toolset(f.read_text(encoding="utf-8", errors="replace"))
             except OSError:
                 continue
-            if m:
-                modules.setdefault(m.group(1), f)
+            if name:
+                modules.setdefault(name, f)
     if doc is None:
         from stilhawt_cli import grammar as _cli
         doc = _cli.load()
@@ -389,6 +394,9 @@ def _selftest() -> int:
         if not cond:
             print(f"✗ {name}")
 
+    check("MUST-FAIL a Toolset quoted in a docstring is not a tool; one built in code is",
+          (declared_toolset('"""e.g.\n    tools = Toolset("mypkg.keys")\n"""\nx = 1\n'),
+           declared_toolset('from t import Toolset\ntools = Toolset("real.one")\n')) == (None, "real.one"))
     ts = Toolset("fake")
 
     @ts.verb("find", output=["k"], args=[Arg("text", rest=True, required=True), Arg("--max")])
@@ -514,6 +522,25 @@ def _selftest() -> int:
             WORKSPACE = saved_ws
     print(f"{ok}/{total} selftests passed")
     return 0 if ok == total else 1
+
+
+_SKIP_DIRS = {"__pycache__", "build", "dist", ".venv", "venv", "node_modules", ".git", ".tox"}
+
+
+def declared_toolset(source: str) -> str | None:
+    """The name of the Toolset a module REALLY builds (`Toolset("x")` as code), or None. PURE.
+    A regex on the text also matched the example in a docstring, and `tools list` then reported a
+    ghost tool `mypkg.keys` on a fresh install (a blank tester, 2026-09-29)."""
+    import ast
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "Toolset"
+                and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            return node.args[0].value
+    return None
 
 
 def grammar_rows(doc: dict | None = None) -> list[dict]:

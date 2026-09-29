@@ -14,6 +14,7 @@ fails that check — the language never silently ignores a pipe.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -102,12 +103,15 @@ def _is_group(t: str) -> bool:
     return depth == 0 and quote is None
 
 
+_STAGE_WORD = re.compile(r"[a-z@][a-z0-9_-]*(\s|\)|$)")   # a command, a pipe or a snippet — never a regex
+
+
 def lex(tokens: list[str]) -> list[str]:
     """Tokens → lexemes, with `|`, `(` and `)` separated. PURE.
 
     A token that contains whitespace was QUOTED (a question, a phrase): it is a literal, never
     split — `groq "what is it (one word)?"` keeps its parentheses. A bare token is split on `|`
-    and loses a leading `(` / trailing `)`: `tee (where` and `count)` work glued.
+    and loses a leading `(` / trailing `)`: `tee (where a gt 1|count)` works glued.
     """
     out: list[str] = []
     for t in tokens:
@@ -115,7 +119,11 @@ def lex(tokens: list[str]) -> list[str]:
             # PowerShell passes `"(where x gt 0)"` as ONE argument: a token WHOLLY wrapped in one
             # balanced pair of parentheses is a branch, re-split quote-aware. Anything else with
             # a space stays a literal phrase (2026-09-27).
-            if _is_group(t.strip()):
+            # ... but only when the group OPENS with a stage word (a lowercase name, `@snippet`): a
+            # quoted REGEX is wholly a group too — `"(?P<w>\w+ \w+)"` was re-split, lost its
+            # backslashes and matched nothing (found by the publication parser reading the code's
+            # own examples, 2026-09-29).
+            if _is_group(t.strip()) and _STAGE_WORD.match(t.strip()[1:].lstrip()):
                 out += lex(split_line(t.strip()))
             else:
                 out.append(t)
@@ -188,12 +196,12 @@ def parse_line(tokens: list[str]) -> list[dict]:
             elif pos < len(lx) and lx[pos] == "each":
                 pos += 1
                 if pos >= len(lx) or lx[pos] in ("(", ")", "|"):
-                    raise Refusal("`each` needs the key whose value fills `{}` — `each name (ws search {})`")
+                    raise Refusal("`each` needs the key whose value fills `{}` — `each name (fs search {})`")
                 key = lx[pos]
                 pos += 1
                 body = group("each", True)
                 if not body or body[0]["op"] != "command":
-                    raise Refusal("`each` runs a COMMAND per object — `each name (ws search {} --max 3)`")
+                    raise Refusal("`each` runs a COMMAND per object — `each name (fs search {})`")
                 nodes.append({"op": "each", "key": key, "branch": body})
             elif pos < len(lx) and lx[pos] == "tee":
                 pos += 1
@@ -233,7 +241,7 @@ def parse_line(tokens: list[str]) -> list[dict]:
 def mark_sources(doc: dict | None, tree: list[dict]) -> list[dict]:
     """A `tee` branch whose first word is a NAMESPACE of the grammar (and not a pipe) is a SOURCE:
     it runs its own command and ignores the objects it receives. The parser does not know the
-    grammar, this pass does: `tee (git status) (fleet map) | join host` runs two commands side by
+    grammar, this pass does: `tee (git status .) (fs files .)` runs two commands side by
     side and merges them. Returns the same tree, its source heads turned into `command` nodes."""
     spaces = (doc or {}).get("namespaces") or {}
 

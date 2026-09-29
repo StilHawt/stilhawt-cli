@@ -3,7 +3,7 @@
     python -m stilhawt_cli.std fs-files [<dir>]          # one row per file: language, kind, lines, vendored
     python -m stilhawt_cli.std fs-search <pattern>       # a typed grep: file, line, text
     python -m stilhawt_cli.std data-read <file>          # JSON / JSON Lines / CSV / TSV / YAML → rows
-    python -m stilhawt_cli.std repo-status [<dir>]       # every git repository under a directory
+    python -m stilhawt_cli.std git-status [<dir>]        # every git repository under a directory
     python -m stilhawt_cli.std http-get <url>            # status, time, type, size, title
     python -m stilhawt_cli.std dsl-read <file> [<path>]  # navigate a YAML / JSON document (JMESPath)
     python -m stilhawt_cli.std dsl-tree <file>           # the document as rows: path, type, value
@@ -14,7 +14,7 @@ Why a brick of its own (2026-09-29: a light toolset to show the CLI — above al
 machine). The workspace's commands answer the workspace (its fleet,
 its contracts, its repositories); these answer the SAME gestures on any machine. Each returns FACTS
 only — filtering, grouping, totalling, asking a model are the pipeline's business. They ship in the
-public package and serve the workspace too: its commands are overlays on them (`ws files` adds the
+public package and serve the workspace too: its commands are overlays on them (the workspace's file census adds the
 repository owner to `fs files`), never a second implementation.
 
 Read-only everywhere; `http get` is the one `network` verb. No value of a credential is ever read out:
@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -157,6 +158,8 @@ def data_read(file: str) -> list[dict]:
     (`key` added); anything else is ONE row. The format is read from the EXTENSION, never guessed."""
     import csv
     p = here(file)
+    if p.is_dir():
+        raise ToolRefusal(f"{file} is a directory, not a file — `fs files {file}` lists it")
     if not p.is_file():
         raise ToolRefusal(f"no such file: {file}")
     if p.stat().st_size > MAX_READ:
@@ -167,7 +170,9 @@ def data_read(file: str) -> list[dict]:
         # A CSV has no types: a cell that is a clean number BECOMES a number, or `where stars gt 3` would
         # compare a string with a number and keep nothing (found on the README's own example). Anything
         # else stays text — "007" and "1e5" too: a leading zero or an exponent is an identifier's shape.
-        return [{k: _number(v) for k, v in r.items()}
+        # A row LONGER than the header: csv puts the surplus under the key None, which JSON printed as
+        # "null" (found by a blank tester, 2026-09-29) — it gets a name that says what it is.
+        return [{("_extra" if k is None else k): (v if k is None else _number(v)) for k, v in r.items()}
                 for r in csv.DictReader(text.splitlines(), delimiter="\t" if ext == ".tsv" else ",")]
     if ext in (".jsonl", ".ndjson"):
         rows = []
@@ -185,8 +190,7 @@ def data_read(file: str) -> list[dict]:
         except ValueError as e:
             raise ToolRefusal(f"{file} is not JSON: {e}") from None
     elif ext in (".yaml", ".yml"):
-        import yaml
-        doc = yaml.safe_load(text)
+        doc = _yaml(text, file)
     else:
         raise ToolRefusal(f"{file}: extension `{ext}` is not a data format read here (json, jsonl, csv, tsv, yaml)")
     if isinstance(doc, list):
@@ -202,8 +206,33 @@ def _git(r: Path, *args) -> str:
     return x.stdout if x.returncode == 0 else ""
 
 
-def repo_status(d: str | None = None, depth: int = 2) -> list[dict]:
-    """Every git repository under `d` (itself included), up to `depth` levels down."""
+def read_porcelain(repo: str, porcelain_v2: str) -> dict:
+    """`git status --porcelain=v2 --branch` → one row. PURE. `ahead`/`behind` stay None when there is
+    no upstream: « 0 commits ahead » and « nothing to compare with » are not the same fact."""
+    out = {"repo": repo, "branch": None, "modified": 0, "untracked": 0, "conflicts": 0, "ahead": None, "behind": None}
+    for line in porcelain_v2.splitlines():
+        if line.startswith("# branch.head "):
+            out["branch"] = line.split(" ", 2)[2]
+        elif line.startswith("# branch.ab "):
+            a, b = line.split()[2:4]
+            out["ahead"], out["behind"] = int(a), -int(b)
+        elif line[:2] in ("1 ", "2 "):
+            out["modified"] += 1
+        elif line.startswith("? "):
+            out["untracked"] += 1
+        elif line.startswith("u "):
+            out["conflicts"] += 1
+    return out
+
+
+def git_status(d: str | None = None, depth: int = 2, workers: int = 8) -> list[dict]:
+    """Every git repository under `d` (itself included), up to `depth` levels down — in parallel
+    (git is slow when cold). Named `git status` because that is the gesture: the workspace's own
+    `git status` is an overlay answering its root and nested repositories (2026-09-29: the public
+    help showed `git status | where …`, a command the package called `repo status`)."""
+    from concurrent.futures import ThreadPoolExecutor
+    if not shutil.which("git"):
+        raise ToolRefusal("git is not installed (or not on the PATH) — `git status` asks git")
     root = _dir(d)
     repos = []
     for dp, dn, _ in os.walk(root):
@@ -213,23 +242,15 @@ def repo_status(d: str | None = None, depth: int = 2) -> list[dict]:
         if len(p.relative_to(root).parts) >= depth:
             dn[:] = []
         dn[:] = [x for x in dn if x not in SKIP and not x.startswith(".")]
-    rows = []
-    for r in repos:
-        branch, ahead, behind, modified, untracked = None, None, None, 0, 0
-        for line in _git(r, "status", "--porcelain=v2", "--branch").splitlines():
-            if line.startswith("# branch.head "):
-                branch = line.split(" ", 2)[2]
-            elif line.startswith("# branch.ab "):
-                a, b = line.split()[2:4]
-                ahead, behind = int(a), -int(b)
-            elif line[:2] in ("1 ", "2 ", "u "):
-                modified += 1
-            elif line.startswith("? "):
-                untracked += 1
-        rows.append({"repo": str(r.relative_to(root)).replace("\\", "/") or ".", "branch": branch,
-                     "modified": modified, "untracked": untracked, "ahead": ahead, "behind": behind,
-                     "last_commit": _git(r, "log", "-1", "--format=%cI").strip() or None})
-    return rows
+
+    def one(r: Path) -> dict:
+        row = read_porcelain(str(r.relative_to(root)).replace("\\", "/") or ".",
+                             _git(r, "status", "--porcelain=v2", "--branch"))
+        row["last_commit"] = _git(r, "log", "-1", "--format=%cI").strip() or None
+        return row
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, repos))
 
 
 def http_get(url: str, timeout: float = 10.0) -> list[dict]:
@@ -262,9 +283,23 @@ def load_doc(file: str):
         raise ToolRefusal(f"no such file: {file}")
     text = p.read_text(encoding="utf-8-sig", errors="replace")
     if p.suffix.lower() == ".json":
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except ValueError as e:
+            raise ToolRefusal(f"{file} is not JSON: {e}") from None
+    return _yaml(text, file)
+
+
+def _yaml(text: str, file: str):
+    """YAML → a document, or a REFUSAL naming the line — never a traceback (a malformed JSON was
+    refused cleanly while a malformed YAML crashed: found by a blank tester, 2026-09-29)."""
     import yaml
-    return yaml.safe_load(text)
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f":{mark.line + 1}" if mark is not None else ""
+        raise ToolRefusal(f"{file}{where} is not YAML: {getattr(e, 'problem', None) or e}") from None
 
 
 def brief(v, n: int = 200):
@@ -381,13 +416,13 @@ def _data_read(file):
             for i, r in enumerate(data_read(file), 1)]
 
 
-@tools.verb("repo-status", output=["repo", "branch", "modified", "untracked", "ahead", "behind", "last_commit"],
-            types={"repo": "str", "branch": "str", "modified": "int", "untracked": "int", "ahead": "int",
-                   "behind": "int", "last_commit": "str"},
+@tools.verb("git-status", output=["repo", "branch", "modified", "untracked", "conflicts", "ahead", "behind", "last_commit"],
+            types={"repo": "str", "branch": "str", "modified": "int", "untracked": "int", "conflicts": "int",
+                   "ahead": "int", "behind": "int", "last_commit": "str"},
             args=[Arg("dir", help="a directory (default: the current one)"), Arg("--depth", help="levels down (default 2)")])
-def _repo_status(dir, depth):
-    """every git repository under a directory: branch, modified, untracked, ahead / behind its upstream"""
-    return repo_status(dir, _int(depth, 2, "--depth"))
+def _git_status(dir, depth):
+    """every git repository under a directory: branch, modified, untracked, conflicts, ahead / behind its upstream"""
+    return git_status(dir, _int(depth, 2, "--depth"))
 
 
 @tools.verb("http-get", effect="network", output=["url", "status", "ms", "type", "bytes", "title", "error"],
@@ -487,9 +522,23 @@ def _selftest() -> int:
             r.mkdir()
             subprocess.run(["git", "-C", str(r), "init", "-q"], check=True, creationflags=_NO_WINDOW)
             (r / "f.txt").write_text("x", encoding="utf-8")
-            st = repo_status(t)
-            check("repo status: a repository under the directory, its untracked file counted",
+            st = git_status(t)
+            check("git status: a repository under the directory, its untracked file counted",
                   [(x["repo"], x["untracked"]) for x in st] == [("proj", 1)])
+        (w / "bad.yaml").write_text("a: [1,\n", encoding="utf-8")
+        try:
+            data_read(str(w / "bad.yaml"))
+            bad = "read"
+        except ToolRefusal as e:
+            bad = str(e)
+        check("MUST-FAIL a malformed YAML is a refusal naming the file, not a traceback",
+              "is not YAML" in bad and "bad.yaml" in bad)
+        (w / "ragged.csv").write_text("a,b\n1,2,3\n", encoding="utf-8")
+        check("a CSV row longer than its header: the surplus is `_extra`, never a key `null`",
+              data_read(str(w / "ragged.csv")) == [{"a": 1, "b": 2, "_extra": ["3"]}])
+        por = read_porcelain("r", "# branch.head main\n1 .M N... 1 2 3\nu UU N... a\n? x\n")
+        check("git status: modified, conflict and untracked counted apart; no upstream = None, not 0",
+              (por["modified"], por["conflicts"], por["untracked"], por["ahead"]) == (1, 1, 1, None))
     import tempfile as _tf
     with _tf.TemporaryDirectory() as caller:
         (Path(caller) / "mine.csv").write_text("a\n1\n", encoding="utf-8")

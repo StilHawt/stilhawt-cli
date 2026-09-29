@@ -437,7 +437,7 @@ def griefs_transport(argv: list[str]) -> list[str]:
 
 @contextmanager
 def drapeaux(octroi: dict):
-    """Les arguments `claude -p` d'un octroi, câblage MCP compris.
+    """Les arguments du CLI Claude (mode print, -p) pour un octroi, câblage MCP compris.
 
     ⚠ POURQUOI UN SEUL ENDROIT. Sans ça, chaque appelant écrit sa ligne de flags, et le jour où
     un mandat se met à déléguer, ceux qui n'ont pas pensé au `--mcp-config` accordent un outil

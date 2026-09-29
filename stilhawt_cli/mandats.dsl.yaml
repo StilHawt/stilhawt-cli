@@ -51,7 +51,7 @@ mandats:
     racine: .
     outils:
       cli: [tools list, tools commands, snip list, snip uses, fs files, fs search, data read,
-            dsl read, dsl tree, repo status, where, grep, select, sort, head, count, group, join]
+            dsl read, dsl tree, git status, where, grep, select, sort, head, count, group, join]
     modeles: []
     budget:
       minutes: 5

@@ -9,22 +9,38 @@ runs**: unknown stages, effects that are not allowed, unbounded repetitions and 
 refused with the reason and the correct form.
 
 ```text
-stilhawt data read examples/reviews.csv | jev "Is this review positive?" --options yes,no --on text --pan texte | group jev.choice
+stilhawt 'data read examples/reviews.csv | jev "Is this review positive?" --options yes,no --on text --pan texte | group jev.choice'
 ```
 
 One line: read a file, ask a model to *decide* for each row — sending only the `text` field — and
-count the answers. The rest of this page is what makes that line safe, bounded and composable.
+count the answers. **The quotes matter**: in your shell an unquoted `|` starts another program, so a
+whole line goes in ONE quoted argument (the form used on this page, the same in bash, zsh and
+PowerShell). Inside the interactive shell (`stilhawt` alone) type the line without them; and
+`stilhawt data read f | stilhawt where …` — one process per stage, JSON Lines in between — works too. The rest of this page is what makes that line safe, bounded and composable.
 
 ## Install
 
+Python 3.10 or later, and `git` — to get the package (both ways below use it) and for `git status`
+(`fs files` uses git when it is there, a plain walk otherwise). The package is not on PyPI: install it
+from the repository — clone it, since the examples below read `examples/`:
+
 ```bash
-pip install stilhawt-cli              # or "stilhawt-cli[shell]" for tables and completion
+git clone https://github.com/StilHawt/stilhawt-cli
+cd stilhawt-cli
+pip install .                         # or ".[shell]" for tables and completion
+stilhawt --version
 stilhawt --check                      # lints the grammar: 0 grievance
 stilhawt help
 ```
 
-`stilhawt` alone opens an interactive shell. Outside a terminal (a pipe, a file, an agent) the output
-is always JSON Lines; `--json` / `--text` force either one.
+(`pip install git+https://github.com/StilHawt/stilhawt-cli` installs the command alone, without the examples.)
+
+`stilhawt` alone, in a terminal, opens an interactive shell (`stilhawt[local]>`): type lines without
+quotes. With the `shell` extra (`pip install ".[shell]"`), Tab completes namespaces, commands and pipes
+(not field names), and the history is kept in `~/.stilhawt_history`; without it the shell still works,
+without completion. Outside a terminal (a pipe, a file, an agent) a command's
+output is JSON Lines; `--json` / `--text` force either one. `help`, `--check` and `--version` print text
+for a human, wherever they go.
 
 ## Keys: Groq and Jev
 
@@ -67,8 +83,8 @@ A model is one stage of a pipeline like any other, with three things a raw API c
 Private keys (starting with `_`) and what an earlier model added never leave.
 
 ```text
-stilhawt data read examples/reviews.csv | select id product text
-stilhawt data read examples/reviews.csv | groq "What is the complaint, in five words?" --on text --pan texte | select id groq
+stilhawt 'data read examples/reviews.csv | select id product text'
+stilhawt 'data read examples/reviews.csv | groq "What is the complaint, in five words?" --on text --pan texte | select id groq'
 ```
 
 **2. You say what it is — and the guard decides.** Every command declares the *pan* of what it
@@ -76,10 +92,11 @@ produces (`texte`, `code`, `donnees` = raw data, `personne`, `image`). `data rea
 without more the egress guard **refuses** to send it:
 
 ```text
-stilhawt data read examples/reviews.csv | groq "Summarise"
+stilhawt 'data read examples/reviews.csv | groq "Summarise"'
 ```
 
-is refused before any call. `--on text --pan texte` is you asserting: *this field is prose*. The shipped
+is refused before any call. So is `--on` naming a field no object carries — a typo never sends nulls.
+`--on text --pan texte` is you asserting: *this field is prose*. The shipped
 guard sends `texte` and `code`, refuses the rest, and does not pretend to anonymise. With no guard
 registered, every model pipe is refused (fail-closed).
 
@@ -87,13 +104,13 @@ registered, every model pipe is refused (fail-closed).
 `{choice, margin, p}`. The **margin** (top − second probability) is what to filter on:
 
 ```text
-stilhawt data read examples/reviews.csv | jev "Is this review positive?" --options yes,no --on text --pan texte | where jev.margin gt 0.5 | group jev.choice
+stilhawt 'data read examples/reviews.csv | jev "Is this review positive?" --options yes,no --on text --pan texte | where jev.margin gt 0.5 | group jev.choice'
 ```
 
 And the two compose — generate, then judge what was generated:
 
 ```text
-stilhawt data read examples/reviews.csv | groq "Name the main problem in two words" --on text --pan texte | jev "Is this a quality problem?" --options yes,no --on groq --pan texte | select id groq jev.choice
+stilhawt 'data read examples/reviews.csv | groq "Name the main problem in two words" --on text --pan texte | jev "Is this a quality problem?" --options yes,no --on groq --pan texte | select id groq jev.choice'
 ```
 
 **Bounded, and visible before it runs.** Each model pipe declares a maximum number of objects (one
@@ -101,10 +118,15 @@ call each); `--all` makes one call for the whole set. `explain` shows the plan �
 data goes, how many calls at most — without calling anything:
 
 ```text
-stilhawt explain data read examples/reviews.csv | jev "positive?" --options yes,no --on text --pan texte
+stilhawt 'explain data read examples/reviews.csv | jev "positive?" --options yes,no --on text --pan texte'
 ```
 
 The answer of a model is **data**: added as a field, never executed.
+
+**A call that fails does not stop the line.** Without a key, or when the provider refuses, each object
+keeps flowing with `groq: null` and the reason in `groq_refused` (for `jev`: `jev.refused`), and one line
+on stderr says how many were not answered and why — e.g. `groq: 12/12 object(s) not answered —
+GROQ_API_KEY is not set`. `select id groq groq_refused` shows it per object.
 
 ## Navigate a DSL
 
@@ -113,19 +135,21 @@ A DSL here is a YAML (or JSON) document with a closed vocabulary. The CLI reads 
 ```text
 stilhawt dsl tree examples/service.yaml --depth 2
 stilhawt dsl read examples/service.yaml "rules[?effect=='write'].id"
-stilhawt dsl read examples/service.yaml rules | groq "Is this rule risky? One word." --on value --pan texte
+stilhawt 'dsl read examples/service.yaml rules | groq "Is this rule risky? One word." --on value --pan texte'
 ```
 
 `dsl tree` lists every node with its **dotted path** — exactly what `where`, `select` and an AI pipe's
-`--on` take — so you find the field, then send only it. `dsl read` selects with JMESPath (jmespath.org).
+`--on` take — so you find the field, then send only it. `dsl read` selects with JMESPath (jmespath.org):
+a string literal takes **single** quotes (`'write'`); in double quotes JMESPath reads a field name, and
+the selection is empty.
 
 ## Draw it
 
 `view` turns any stream into a local page — nothing leaves your machine. The CLI can draw itself:
 
 ```text
-stilhawt tools commands | where kind eq command | view graph namespace command --mode contains
-stilhawt data read examples/reviews.csv | view bar product stars
+stilhawt 'tools commands | where kind eq command | view graph namespace command --mode contains'
+stilhawt 'data read examples/reviews.csv | view bar product stars'
 ```
 
 ![The CLI's own grammar, drawn by the CLI](docs/grammar.svg)
@@ -133,7 +157,7 @@ stilhawt data read examples/reviews.csv | view bar product stars
 `view graph` takes two field names and links the value of the first to the value of the second;
 `--mode contains` makes each first value a frame around its second values (a grammar, a folder
 tree), the default draws edges. `--engine mermaid` writes text
-you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page without opening it.
+you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page without opening it. The interactive graph needs Cytoscape.js (`STILHAWT_CYTOSCAPE_JS=<path to cytoscape.min.js>`); without it the page says so and shows the static SVG.
 
 ## The language in five minutes
 
@@ -144,7 +168,7 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 | `count` / `sum` / `group` | aggregates made by the TOOL | `group language sum lines` |
 | `extract` / `replace` | sed-like, into fields, no model | `extract text "^(?P<first>\w+)"` |
 | `tee` … `join` | parallel branches, merged by key | `tee (where stars gt 3) (where stars lt 3) \| join id` |
-| `each` | one READ command per object, `{}` = its value | `snip uses \| group session \| each session (snip uses --session {})` |
+| `each` | one READ command per object, `{}` = its value | `git status . \| each repo (fs files {})` |
 | `diff` | what changed since the last snapshot, by key | `diff reviews --key id` |
 | `view` | a local page: table, bars, tree, graph, document | `view bar product stars` |
 | `groq` / `jev` | generate / decide, per object or `--all` | see above |
@@ -156,12 +180,12 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 | `fs files [dir]` | one row per file: language, kind (code · markup · config/data · doc), lines, vendored |
 | `fs search <text>` | a typed grep: file, line, text |
 | `data read <file>` | JSON, JSON Lines, CSV, TSV or YAML as rows |
-| `repo status [dir]` | every git repository below: branch, modified, untracked, ahead, behind |
+| `git status [dir]` | every git repository below: branch, modified, untracked, conflicts, ahead, behind (needs git) |
 | `http get <url>` | status, time, type, size, title |
 | `dsl read` / `dsl tree` | navigate a YAML / JSON document |
 | `ai keys` / `ai probe` | the model keys: set or not, valid or not — never a value |
 
-Count the code of a project: `stilhawt fs files . | where vendored eq false | where kind eq code | group language sum lines`.
+Count the code of a project: `stilhawt 'fs files . | where vendored eq false | where kind eq code | group language sum lines'`.
 
 ## Adding your own commands
 
@@ -177,10 +201,18 @@ tools = Toolset("mypkg.inventory")
 def hosts(role):
     """the hosts of my inventory"""
     return [{"name": "web-1", "role": "web", "up": True}]
+
+
+if __name__ == "__main__":
+    raise SystemExit(tools.main())   # `python -m mypkg.inventory --describe` prints the schema
 ```
 
 and the grammar names it (`kind: tool`, `tool: mypkg.inventory:hosts`, its `effect`, its `output`).
-`stilhawt --check` verifies the mapping **both ways**. Transports, the egress guard, the key
+The grammar is `stilhawt_cli/commandes.dsl.yaml`: to extend it, work in your clone and install it
+editable (`pip install -e .`), so the file you edit is the one the CLI reads. `stilhawt tools list`
+finds the tools of the package and of the directories in `STILHAWT_TOOL_ROOTS` (`;`-separated) —
+`mapped_to: unmapped` for a verb no command names yet. `stilhawt --check` verifies that every command
+maps a real verb, and that the verb's declared output matches. Transports, the egress guard, the key
 declarations and where the CLI writes its files are **extension points** (`stilhawt_cli.ext`), filled
 by the modules the grammar names under `extensions:` — this package ships `stilhawt_cli.ext_models`.
 
@@ -200,7 +232,7 @@ they show the *kind* of thing the grammar is for. Take the pattern, write your o
 <!-- usage: workspace-only -->
 | What we type | What it answers, for us |
 |---|---|
-| `git status` | every repository of the workspace, dirty or behind |
+| `git status` (our overlay) | the workspace's root and every nested repository, wherever we stand |
 | `ws search`, `ws files`, `ws projects` | search, line counts, the project census — across all repositories |
 | `key find`, `key get`, `dsl get`, `dsl walk` | any identifier of our registries; a contract by its trigram; its lineage |
 | `plan show`, `plan list` | the state of a plan, COMPUTED from proofs rather than ticked by hand |
@@ -209,8 +241,11 @@ they show the *kind* of thing the grammar is for. Take the pattern, write your o
 | `gov who`, `gov check` | which session touched a file; every contract's own check |
 | `conv find`, `dlg thread` | our past conversations with agents; the dialogue between them |
 | `oss check`, `oss push` | how this very package was generated, checked and published |
-| `@loc` | a named line: lines of code per language, every project, vendored code left out |
 <!-- /usage -->
+
+Named lines (snippets) are the same idea one level up: `@loc` ships as an example
+(`stilhawt_cli/snippets/snippets.dsl.yaml`) — lines of code per language here, vendored code left out;
+ours runs it across every project.
 
 The point is not these commands: it is that each gesture we used to improvise became **one declared,
 typed, bounded line** — for us, and for the agents working with us.

@@ -225,6 +225,38 @@ pipes:
       destination: groq
     max_objects: 50
 namespaces:
+  git:
+    description: git repositories under a directory
+    home: stilhawt_cli/std.py
+    export: client
+    commands:
+      status:
+        description: 'every git repository under a directory: branch, modified, untracked, conflicts,
+          ahead / behind — `git status . | where modified gt 0`'
+        effect: read
+        pan: texte
+        kind: tool
+        tool: stilhawt_cli.std:git-status
+        timeout_s: 300
+        output:
+        - repo
+        - branch
+        - modified
+        - untracked
+        - conflicts
+        display:
+          columns:
+          - repo
+          - branch
+          - modified
+          - untracked
+          - conflicts
+          - ahead
+          - behind
+          - last_commit
+          formats:
+            last_commit: datetime
+    shared_home: one module of generic tools (std); each namespace is a family of gestures
   dsl:
     description: navigate any YAML / JSON document — `read` selects with JMESPath (jmespath.org), `tree`
       lists every node with the dotted path `where`, `select` and an AI pipe's `--on` take
@@ -378,36 +410,6 @@ namespaces:
         tool: stilhawt_cli.std:data-read
         output:
         - row
-  repo:
-    description: git repositories under a directory
-    home: stilhawt_cli/std.py
-    shared_home: one module of generic tools (cli.std); each namespace is a family of gestures
-    export: client
-    commands:
-      status:
-        description: 'every git repository under a directory: branch, modified, untracked, ahead / behind
-          — `repo status . | where modified gt 0`'
-        effect: read
-        pan: texte
-        kind: tool
-        tool: stilhawt_cli.std:repo-status
-        timeout_s: 300
-        output:
-        - repo
-        - branch
-        - modified
-        - untracked
-        display:
-          columns:
-          - repo
-          - branch
-          - modified
-          - untracked
-          - ahead
-          - behind
-          - last_commit
-          formats:
-            last_commit: datetime
   http:
     description: one HTTP request, as a row
     home: stilhawt_cli/std.py

@@ -36,6 +36,6 @@ snippets:
     status: active
   dirty-repos:
     intent: which git repositories below have uncommitted changes
-    line: "repo status | where modified gt 0 | select repo branch modified untracked"
+    line: "git status | where modified gt 0 | select repo branch modified untracked"
     origin: {source: example}
     status: active
