@@ -1,0 +1,80 @@
+trigramme: TLM
+version: 1
+date: 2026-10-03
+enabled: true
+service: stilhawt-cli
+applies_to:
+- python_wheel
+not_applicable:
+  platformio: firmware on a user's board — no CLI, and a device that calls home is not a usage statistic
+transport:
+  protocol: otlp_http_json
+  endpoint: https://stilhawt.com/otel/v1/traces
+  timeout_s: 3
+  exit_wait_s: 0.2
+  spool_max: 200
+off_when:
+  env:
+    STILHAWT_TELEMETRY:
+    - '0'
+    - 'false'
+    - 'off'
+    - 'no'
+    DO_NOT_TRACK:
+    - '1'
+    - 'true'
+    - 'yes'
+  ci_env:
+  - CI
+  - GITHUB_ACTIONS
+  - GITLAB_CI
+  - BUILDKITE
+  - JENKINS_URL
+  - TF_BUILD
+  config: 'telemetry.json `enabled: false` — written by `python -m stilhawt_cli.telemetry off`'
+identity:
+  kind: random_uuid4
+  rotate_days: 395
+  store: <user config dir>/stilhawt/telemetry.json — %APPDATA% on Windows, ~/Library/Application Support
+    on macOS, $XDG_CONFIG_HOME or ~/.config elsewhere
+first_run: notice_only
+notice: 'stilhawt collects anonymous usage statistics: which commands run, how long, the package version
+  and OS family — never their arguments, paths or your data; a random id (renewed periodically) counts
+  installations, your IP is not stored. Nothing is sent on this first run. Turn it off with STILHAWT_TELEMETRY=0
+  (or DO_NOT_TRACK=1), or `python -m stilhawt_cli.telemetry off`. Details: https://github.com/StilHawt/stilhawt-cli#telemetry'
+resource:
+  service.name: the package (`service` above)
+  service.version: the installed version
+  os.type: windows | linux | darwin | other
+  process.runtime.version: Python major.minor
+  stilhawt.install_id: the random identifier
+events:
+  install:
+    when: the first run AFTER the notice — counts an installation that was used at least twice
+    attributes: {}
+  command:
+    when: every invocation of the CLI
+    attributes:
+      cli.namespace: a namespace of the grammar, or <other>
+      cli.command: a command of that namespace, or <other>
+      cli.pipes: the pipe names of the line, comma-separated (grammar words only)
+      cli.mode: line | shell | help | version | check
+      cli.exit_code: the process exit code
+      cli.duration_ms: wall time of the command
+forbidden:
+- host.name
+- host.id
+- host.mac
+- user.name
+- user.id
+- client.address
+- net.peer.ip
+- process.command_line
+- process.command_args
+- process.executable.path
+- os.description
+- cwd
+- path
+- file
+- prompt
+- args

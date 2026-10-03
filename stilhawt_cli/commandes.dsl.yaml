@@ -9,6 +9,8 @@ grammar:
     record: writes a snapshot under data\cli\snaps\ ONLY (atomic) — the memory `diff` compares against
     deploy: changes a host of the fleet
     device: changes a physical device plugged into this host (flashes a firmware)
+    command: actuates a RUNNING device (an MQTT order from a CLOSED vocabulary -- the device's declared
+      actuators) -- plans by default, --apply to send; NO commit (it changes no code and flashes no firmware)
   export:
     client: may ship to a client (assumes neither this host, nor the tailnet, nor secrets)
     internal: stays inside the Stilhawt workshop (assumes the tailnet or internal tools)
@@ -51,6 +53,7 @@ allowed_effects:
 - write
 - deploy
 - device
+- command
 extensions:
 - stilhawt_cli.ext_models
 pipes:
@@ -176,10 +179,11 @@ pipes:
       — mermaid and drawio write a FILE to paste in a .md or open in draw.io), `--mode auto|contains|edges`
       (contains: each source frames its targets, refused if a target has two sources). Returns where it
       is.'
-    usage: view (auto) | view table | view doc [<text key>] | view bar <label> <number> | view tree (after
-      `explain … --json`) | view graph <source> <target> [--engine cytoscape|svg|mermaid|drawio] [--mode
-      auto|contains|edges] [--title "…"] — e.g. `tools commands | view graph namespace command --mode
-      contains --engine mermaid`
+    usage: view (auto) | view table | view doc [<text key>] | view diff [--live --rev <range> --staged
+      --explain groq|claude|none --port N --poll S] (after `git hunks`, fold/unfold; --live holds a localhost
+      page that re-reads git) | view bar <label> <number> | view tree (after `explain … --json`) | view
+      graph <source> <target> [--engine cytoscape|svg|mermaid|drawio] [--mode auto|contains|edges] [--title
+      "…"] — e.g. `git hunks main...HEAD | view diff` or `git hunks | view diff --live`
     effect: display
   diff:
     description: 'what changed since the previous run of the same line: rows `added` · `removed` · `changed`
@@ -256,6 +260,33 @@ namespaces:
           - last_commit
           formats:
             last_commit: datetime
+      hunks:
+        description: 'one row per HUNK of git diff in the CURRENT directory''s repository: file, change
+          (added/deleted/renamed/modified), the line counts, the raw hunk and its language. A range as
+          an argument (`git hunks main...HEAD`), `--staged` for the index, nothing = the working tree.
+          Feeds `view diff`; `… | groq "Explique ce changement" --on hunk --pan code` adds a comment per
+          hunk through the egress-guarded AI pipe.'
+        effect: read
+        pan: code
+        kind: tool
+        tool: stilhawt_cli.diffview:hunks
+        output:
+        - file
+        - change
+        - old_start
+        - new_start
+        - added
+        - removed
+        - header
+        - hunk
+        - lang
+        display:
+          columns:
+          - file
+          - change
+          - added
+          - removed
+          - header
     shared_home: one module of generic tools (std); each namespace is a family of gestures
   dsl:
     description: navigate any YAML / JSON document — `read` selects with JMESPath (jmespath.org), `tree`

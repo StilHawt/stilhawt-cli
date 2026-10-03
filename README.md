@@ -2,6 +2,8 @@
 
 **A typed, bounded command line for humans and AI agents — with AI pipes you can trust.**
 
+Made by [StilHawt](https://stilhawt.com) · collects anonymous usage statistics — [what, and how to turn it off](#telemetry)
+
 Every command is *declared* in a grammar (a YAML file): what it does, the keys of the objects it
 outputs, and its **effect** (`read`, `network`, `write`…). Commands emit JSON Lines; **pipes** filter,
 sort, group, join and draw them — and two of them ask a model. A line is checked **before anything
@@ -250,6 +252,36 @@ ours runs it across every project.
 The point is not these commands: it is that each gesture we used to improvise became **one declared,
 typed, bounded line** — for us, and for the agents working with us.
 
+## Telemetry
+
+stilhawt sends **anonymous usage statistics** so we can tell whether anyone actually uses it — a
+clone count cannot tell a person from a robot. What leaves, and nothing else:
+
+- the **command words** of the grammar — namespace, command, pipe names (for a line that reads a
+  CSV and asks Jev: the words data, read and jev), never their arguments: no path, no prompt, no
+  file name, no data. A word the grammar does not know is
+  sent as `<other>`;
+- the exit code and duration, the package version, the OS family, the Python major.minor;
+- a **random identifier** drawn on your first run and stored in your config directory, renewed every
+  the period the contract declares (`identity.rotate_days`, set by the French regulator's recommendation
+  for audience measurement) — no hardware identifier (MAC, serial) is ever read. It counts
+  installations, not people.
+
+Your IP address is not stored: the collector's route is excluded from the server logs. The run that
+shows the notice sends nothing. Everything above is a closed list, declared in
+[`stilhawt_cli/telemetry.dsl.yaml`](stilhawt_cli/telemetry.dsl.yaml) and re-applied by the collector.
+
+**Turn it off** — any one of these:
+
+```bash
+export STILHAWT_TELEMETRY=0          # PowerShell: $env:STILHAWT_TELEMETRY = "0"
+export DO_NOT_TRACK=1                # the consoledonottrack.com convention
+python -m stilhawt_cli.telemetry off # persistent; `status` and `on` too
+```
+
+It is also off in continuous integration (`CI`, `GITHUB_ACTIONS`…). Questions:
+[stilhawt.com](https://stilhawt.com).
+
 ## Tests
 
 Every module carries its own self-test, including cases that **must fail**:
@@ -258,6 +290,7 @@ Every module carries its own self-test, including cases that **must fail**:
 python -m stilhawt_cli --selftest
 python -m stilhawt_cli.std --selftest
 python -m stilhawt_cli.ext_models --selftest
+python -m stilhawt_cli.telemetry --selftest
 ```
 
 ## License

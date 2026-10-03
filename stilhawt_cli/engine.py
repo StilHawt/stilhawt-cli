@@ -47,14 +47,19 @@ COMMAND_FIELDS = {"description", "effect", "kind", "output", "command", "file", 
 # Effects that CHANGE something. A command carrying one PLANS by default: the engine itself passes
 # `--plan` unless `--apply` was typed — a home that forgets its plan mode cannot act by accident
 # (CLI-PLAN G4, widening ratified by the user on 2026-09-26).
-ACTING = {"write", "deploy", "device"}
+ACTING = {"write", "deploy", "device", "command"}
 # The acting commands RATIFIED so far (the selftest's ratchet): a new one is added here knowingly, with
 # its reason in the selftest — never slipped into a grammar. A grammar with none passes.
 # `oss push` (2026-09-29, OSS-PLAN B5): publishes the public repository — plans by default, refuses an
 # existing repo or receipt, runs only on a human go (--apply). Added knowingly.
 # `oss release` (2026-09-29, OSS-PLAN C2): a new version, one commit on the PUBLIC history, never forced,
 # refused if the public repository moved since our last receipt. Added knowingly.
-ACTING_RATIFIED = frozenset({"build run", "deploy apply", "flash run", "gov draw", "oss export", "oss push", "oss release"})
+# `things wiring` (2026-10-01): draws a wiring diagram SVG under the studio's gitignored data/wiring/ from the
+# boards model DSL — plans by default, --apply writes the file only. No git, no device, no network. Added knowingly.
+# `things action` (2026-10-02, effect `command`): sends ONE MQTT order to a RUNNING stilhawt-things device, from
+# the CLOSED vocabulary of its manifest actuators (free text refused — Rule no. 1). Plans by default, --apply
+# publishes to stilhawt-things/<id>/cmd. NOT commit-gated (it acts on a device, not on code). Added knowingly.
+ACTING_RATIFIED = frozenset({"build run", "deploy apply", "flash run", "gov draw", "oss export", "oss push", "oss release", "things wiring", "things action"})
 PIPE_FIELDS = {"description", "usage", "alias", "effect", "delegate", "egress", "default_mandate",
                "max_objects", "mode", "transport"}
 DISPLAY_FIELDS = {"layout", "columns", "formats"}
@@ -793,7 +798,7 @@ def pipe_lines(objects, args):
 
 VIEW_MAX_ROWS = 1000
 VIEW_MAX_BARS = 60
-VIEW_LAYOUTS = ("auto", "table", "bar", "tree", "graph", "doc")
+VIEW_LAYOUTS = ("auto", "table", "bar", "tree", "graph", "doc", "diff")
 DOC_MIN_CHARS = 200     # a text field this long (or multi-line) is a DOCUMENT, not a table cell
 _VIEW_CSS = """
 :root{--bg:#fbfaf7;--fg:#1d1c1a;--mute:#6b6760;--line:#e3dfd6;--bar:#3d6b8c;--head:#f1eee7}
@@ -919,6 +924,23 @@ def render_view(objects: list[dict], layout: str = "table", label: str | None = 
     esc = _h.escape
     n = len(objects)
     notes = [chosen] if chosen else []
+    extra_css = ""
+    if layout == "diff":
+        # A git diff as fold/unfold <details> — native, so the page keeps the strict CSP (no script).
+        from stilhawt_cli import diffview as _dv
+        extra_css = _dv.DIFF_CSS
+        body = _dv.render_diff_body(objects, esc)
+        notes.append("fold/unfold is native (<details>) — no script; CSP forbids the network. "
+                     "A hunk's explanation (field groq/claude/explanation) shows as its comment.")
+        # the diff page carries ONE inline script (the fold/unfold toolbar) — it only flips `open` on
+        # this page's own <details>; still no network, no other origin, every value escaped.
+        return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'\">"
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                f"<title>{esc(title)}</title><style>{_VIEW_CSS}{extra_css}</style></head><body>"
+                f"<h1>{esc(title)}</h1><div class=\"meta\">{n} hunk(s) · diff · "
+                f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')}</div>"
+                f"{body}{''.join(f'<p class=note>{esc(x)}</p>' for x in notes)}</body></html>")
     if layout == "doc":
         # One section per object: its OTHER short fields as a line, then the text as a document.
         sections = []
@@ -1268,30 +1290,133 @@ def render_tree(rows: list[dict], title: str) -> tuple[dict, dict]:
 
 
 def open_page(path: Path) -> str:
-    """Open a local page for the human. Behind ONE function, replaceable (the OS-native rule):
-    stdlib `webbrowser` is itself the cross-platform gateway. `STILHAWT_VIEW_NO_OPEN=1` → written only."""
+    """Show a written page. Behind ONE function, replaceable: a DECLARED EXTERNAL viewer (extension
+    point `ext.opener` — e.g. a browser tool reachable headless) if one is registered, else the OS
+    `webbrowser` (the public default). `STILHAWT_VIEW_NO_OPEN=1` → written only (tests, headless)."""
     if os.environ.get("STILHAWT_VIEW_NO_OPEN") in ("1", "true", "yes"):
         return "not opened (STILHAWT_VIEW_NO_OPEN)"
+    try:                                     # the grammar's extensions may register an opener
+        from stilhawt_cli import grammar as _g
+        _extensions(_g.load())
+    except Exception:                        # noqa: BLE001 — no extensions is fine, fall back to the browser
+        pass
+    shown = _ext.opener()
+    if shown is not None:
+        try:
+            return shown(path)               # a declared external tool shows it (and says the state)
+        except Exception:                    # noqa: BLE001 — the declared viewer is unreachable: fall back
+            pass
     import webbrowser
     return "opened" if webbrowser.open_new_tab(path.resolve().as_uri()) else "not opened (no browser)"
+
+
+def _serve_diff_live(objects, rev, staged, explain, port, poll, title):
+    """`view diff --live` — hold a localhost page open that RE-RUNS git diff on a poll and
+    re-renders (fold/unfold). An explanation per hunk comes from the SAME egress-guarded generate
+    pipe (`groq` by default), memoised by hunk content so only a CHANGED hunk is explained again.
+    Blocks until Ctrl-C. The upstream `objects` are not read: the server re-reads git itself."""
+    import sys as _sys
+
+    from stilhawt_cli import diffview as _dv
+    try:
+        port = 9077 if port is None else int(port)
+        poll = 2 if poll is None else max(1, int(poll))
+    except (TypeError, ValueError):
+        raise Refusal("`--port` and `--poll` take integers")
+    explain = (explain or "groq").lower()
+    if explain not in ("groq", "claude", "none"):
+        raise Refusal("`--explain` is groq | claude | none (the egress-guarded generate pipes)")
+
+    # Under an AGENT mandate (not a human default), the live server's INTERNAL model call obeys the
+    # SAME gate as a line model pipe: the model must be in the mandate's `modeles`, else forced to
+    # none. Closes the `--live --explain <model>` hole for cli.viewer (no exfiltration leg via --live).
+    mid = os.environ.get("STILHAWT_MANDAT")
+    if explain != "none" and mid:
+        granted_model = False
+        try:
+            from stilhawt_cli import grammar as _g
+            if mid in human_mandates(_g.load()):
+                granted_model = True                 # a human at a terminal: their own call
+            else:
+                import stilhawt_cli.mandat as _mnd
+                mdoc = _mnd.charger()
+                mm = next((x for x in (mdoc.get("mandats") or []) if x.get("id") == mid), None)
+                granted_model = bool(mm and explain in (mm.get("modeles") or []))
+        except Exception:                            # noqa: BLE001 — MND unreadable: fail-closed
+            granted_model = False
+        if not granted_model:
+            explain = "none"
+
+    def diff_fn():
+        return _dv.git_diff_text(rev, staged)
+
+    explain_fn = None
+    if explain != "none":
+        from stilhawt_cli import grammar as _cli
+        doc = _cli.load()
+        spec = (doc.get("pipes") or {}).get(explain) or {}
+        ctx = {"doc": doc, "name": explain, "transport": spec.get("transport")}
+
+        def explain_fn(h):  # noqa: F811 — the hunk → one short line, through the guarded pipe
+            rows = pipe_generate([h], ["Explique ce changement en une phrase, en français.",
+                                       "--on", "hunk", "--pan", "code"], ctx)
+            return rows[0].get(explain)
+
+    # Headless (tests, STILHAWT_VIEW_NO_OPEN): the live SERVER is proven in diffview's selftest — here
+    # we neither open a browser nor block, so a scripted `view diff --live` returns at once.
+    if os.environ.get("STILHAWT_VIEW_NO_OPEN") in ("1", "true", "yes"):
+        return [{"view": "live", "layout": "diff/live", "rows": len(objects),
+                 "opened": "not opened (STILHAWT_VIEW_NO_OPEN)"}]
+    try:
+        httpd, url = _dv.serve_live(diff_fn, explain_fn, port=port, title=title, poll=poll)
+    except OSError:                      # port busy → an ephemeral one, and say so
+        httpd, url = _dv.serve_live(diff_fn, explain_fn, port=0, title=title, poll=poll)
+    print(f"live diff at {url} (explain: {explain}) — Ctrl-C to stop", file=_sys.stderr)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    return [{"view": url, "layout": "diff/live", "rows": len(objects), "opened": "closed"}]
 
 
 def pipe_view(objects, args):
     """`view [table] | view bar <label> <value>` [`--title "…"`] — writes the page, opens it, and
     returns ONE object saying where it is: the line's output stays data."""
     title, parts, engine, mode = "stilhawt view", [], "cytoscape", "auto"
+    live = staged = False
+    rev = explain = port = poll = None
+    valued = ("--title", "--engine", "--mode", "--rev", "--explain", "--port", "--poll")
     i = 0
     while i < len(args):
-        if args[i] in ("--title", "--engine", "--mode") and i + 1 < len(args):
-            if args[i] == "--title":
-                title = args[i + 1]
-            elif args[i] == "--engine":
-                engine = args[i + 1]
+        a = args[i]
+        if a in valued and i + 1 < len(args):
+            v = args[i + 1]
+            if a == "--title":
+                title = v
+            elif a == "--engine":
+                engine = v
+            elif a == "--mode":
+                mode = v
+            elif a == "--rev":
+                rev = v
+            elif a == "--explain":
+                explain = v
+            elif a == "--port":
+                port = v
             else:
-                mode = args[i + 1]
+                poll = v
             i += 2
+        elif a == "--live":
+            live = True
+            i += 1
+        elif a == "--staged":
+            staged = True
+            i += 1
         else:
-            parts.append(args[i])
+            parts.append(a)
             i += 1
     if engine not in GRAPH_ENGINES:
         raise Refusal(f"`--engine` is one of GRF's engines: {', '.join(GRAPH_ENGINES)} — not '{engine}'")
@@ -1300,6 +1425,15 @@ def pipe_view(objects, args):
     layout = parts[0] if parts else "auto"
     if layout not in VIEW_LAYOUTS:
         raise Refusal(f"`view` layouts: {', '.join(VIEW_LAYOUTS)} — not '{layout}'")
+    # The diff-only options belong to `view diff`; `--rev`/`--staged` only to its LIVE form (the
+    # static page reads the hunks piped into it — the range is given to `git hunks`, not here).
+    if layout != "diff" and (live or staged or rev is not None or explain is not None):
+        raise Refusal("`--live`, `--rev`, `--staged`, `--explain` belong to `view diff`")
+    if layout == "diff" and not live and (rev is not None or staged):
+        raise Refusal("`--rev`/`--staged` go to `git hunks` (the static `view diff` reads the piped hunks); "
+                      "for a self-refreshing page add `--live`: `git hunks | view diff --live --rev main...HEAD`")
+    if layout == "diff" and live:
+        return _serve_diff_live(objects, rev, staged, explain, port, poll, title)
     label = value = None
     chosen = None
     if layout == "auto":
@@ -1624,6 +1758,44 @@ def _ext_guard(doc: dict | None):
 
 
 
+def _progress_bar(name, done, total, width=24):
+    """One line of progress on STDERR (never stdout — it carries JSON Lines). Total KNOWN ⇒ a real
+    bar (cap.obs doctrine: a counter only when the total is unknown). Caller guards on isatty."""
+    import sys
+    fill = int(width * done / total) if total else width
+    try:
+        bar = "█" * fill + "░" * (width - fill)
+        sys.stderr.write(f"\r{name} ▕{bar}▏ {done}/{total}")
+    except UnicodeEncodeError:      # stderr en cp1252 (Windows) → repli ASCII (RÈGLE N°1)
+        sys.stderr.write(f"\r{name} [{'#' * fill}{'-' * (width - fill)}] {done}/{total}")
+    sys.stderr.flush()
+
+
+def _map_with_progress(fn, objects, name, workers=4):
+    """Run `fn` over objects in a thread pool, ORDER PRESERVED, with a TERMINAL progress bar on stderr
+    as they complete — only when stderr is a TTY (piped / agent output stays clean) and there is more
+    than one object. The bound is len(objects), so it is a real bar. Same results as `pool.map`."""
+    import sys
+    from concurrent.futures import as_completed
+    total = len(objects)
+    results = [None] * total
+    show = total > 1 and sys.stderr.isatty()
+    if show:
+        _progress_bar(name, 0, total)
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(fn, o): i for i, o in enumerate(objects)}
+        for fut in as_completed(futs):
+            results[futs[fut]] = fut.result()
+            done += 1
+            if show:
+                _progress_bar(name, done, total)
+    if show:
+        sys.stderr.write("\r" + " " * 72 + "\r")      # effacer la ligne de la barre
+        sys.stderr.flush()
+    return results
+
+
 def pipe_decide(objects, args, ctx=None):
     """`<model> "question" --options a,b,c` — one typed decision per object, added as
     `<model>: {choice, margin, p}` (e.g. `jev`).
@@ -1665,8 +1837,7 @@ def pipe_decide(objects, args, ctx=None):
                                 "refused": f"choice '{choice}' is not one of the options"}}
         return {**o, name: {"choice": choice, "margin": rep.get("marge"), "p": p}}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        return list(pool.map(one, objects))
+    return _map_with_progress(one, objects, name)
 
 
 ONE_LINE = ("Answer in ONE short line, in the language of the question. No preamble. "
@@ -1710,8 +1881,7 @@ def pipe_generate(objects, args, ctx=None):
         r = ask(f"{ONE_LINE}\n\nQUESTION: {question}\n\nDATA:\n{anonymise(phrase_of(o, keys, drop), pan, destination)}")
         return {**o, name: clean(r), **({f"{name}_refused": r["refus"]} if r.get("refus") else {})}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        return list(pool.map(one, objects))
+    return _map_with_progress(one, objects, name)
 
 
 def refusal_note(name: str, rows: list[dict]) -> str | None:
@@ -2287,7 +2457,9 @@ def mandate_grievances(doc: dict, segs: list[list[str]], mandate_id: str | None,
     m = next((x for x in mandates or [] if x.get("id") == mandate_id), None)
     if m is None:
         return [f"mandate '{mandate_id}' is unknown to MND — refused (fail-closed)"]
-    granted = set(((m.get("outils") or {}).get("cli")) or [])
+    # `cli` grants READ verbs/pipes; `cli_affiche` grants LOCAL display pipes (view/open/notify).
+    # Both are consulted here — a display pipe is allowed only if its mandate names it in cli_affiche.
+    granted = set(((m.get("outils") or {}).get("cli")) or []) | set(((m.get("outils") or {}).get("cli_affiche")) or [])
     models = set(m.get("modeles") or [])
     aliases = pipe_aliases(doc)
     first = segs[0]
@@ -2801,6 +2973,9 @@ def _selftest() -> int:
     refuses("`jev --all` is refused (jev decides per object)",
             lambda: apply_pipes(projs, [["jev", "q", "--all", "--options", "a,b"]], net, ctx), "generate pipe")
 
+    check("the model pool preserves input order (progress bar does not reorder results)",
+          _map_with_progress(lambda o: {"v": o["v"] * 2}, [{"v": 1}, {"v": 2}, {"v": 3}, {"v": 4}], "t"),
+          [{"v": 2}, {"v": 4}, {"v": 6}, {"v": 8}])
     # --- D3: a model is ONE DSL entry. A new one needs no engine code. ---
     net3 = {**net, "pipes": {**net["pipes"], "mymodel": {
         "description": "m", "effect": "network", "delegate": "mymodel", "mode": "generate",
@@ -2844,6 +3019,15 @@ def _selftest() -> int:
     check("a human default (or no mandate) is not checked here",
           (mandate_grievances(netm, [["sys", "stats"]], "human", mands),
            mandate_grievances(netm, [["sys", "stats"]], None, mands)), ([], []))
+    # Volet I: `cli_affiche` grants LOCAL display (view) ON TOP of `cli` reads — the gate unions both.
+    # (the fabricated grammar carries no `view`; add it as a display pipe for these two cases)
+    netmv = {**netm, "pipes": {**netm["pipes"], "view": {"description": "v", "effect": "display"}}}
+    mandv = [{"id": "agent.viewer", "outils": {"cli": ["git status"], "cli_affiche": ["view"]}, "modeles": []}]
+    check("cli_affiche grants a display pipe (view) that the cli family alone refuses",
+          mandate_grievances(netmv, [["git", "status"], ["view", "diff"]], "agent.viewer", mandv), [])
+    check("MUST-FAIL without cli_affiche, a display pipe stays refused (display is not read)",
+          any("does not display" in x for x in mandate_grievances(
+              netmv, [["git", "status"], ["view", "diff"]], "agent.reader", mands)), True)
     # --- D6: the execution TREE — parsed, checked whole, then run ---
     check("glued parentheses and pipes are separated",
           lex(["tee", "(where", "a", "gt", "1|count)", "()"]),
@@ -3420,9 +3604,11 @@ def package_version() -> str:
 def main(argv: list[str] | None = None) -> int:
     """The entry point. A reader that closes the pipe early (`| head -2`) is not an error: Python's
     « Exception ignored … BrokenPipeError » on exit was (a blank tester, 2026-09-29)."""
+    t0 = time.monotonic()
     try:
         code = _main(argv)
         sys.stdout.flush()
+        _telemetry(argv, code, t0)
         return code
     except BrokenPipeError:
         # The standard gesture (Python docs, « Note on SIGPIPE »): point stdout at devnull so the
@@ -3430,6 +3616,18 @@ def main(argv: list[str] | None = None) -> int:
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
         return 0
+
+
+def _telemetry(argv: list[str] | None, code: int, t0: float) -> None:
+    """Anonymous usage telemetry (contract TLM, `telemetry.dsl.yaml`): grammar words only, off in the
+    workspace, off with STILHAWT_TELEMETRY=0 / DO_NOT_TRACK=1. Never changes the command's outcome."""
+    try:
+        import stilhawt_cli.telemetry as telemetry   # a FULL module path: the export renames it (contract OSS)
+        a = one_line_argv(list(sys.argv[1:] if argv is None else argv))
+        telemetry.record(a, code, (time.monotonic() - t0) * 1000,
+                         lambda: telemetry.vocabulary(load(), list(PIPES)), package_version())
+    except Exception:
+        pass
 
 
 def _main(argv: list[str] | None = None) -> int:

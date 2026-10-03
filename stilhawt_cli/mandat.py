@@ -134,9 +134,10 @@ def outils_cli(mandat: dict, familles: dict, modeles_connus: dict | None = None,
         for outil in spec["rend"]:
             if spec["portee"] == "aucune":
                 rendu.append(outil)
-            elif spec["portee"] == "cli":
+            elif spec["portee"] in ("cli", "cli_affiche"):
                 # `stilhawt git status` → `Bash(stilhawt git status:*)` : le verbe est NOMMÉ, ses
-                # options passent. Le CLI re-vérifie le mandat à l'exécution (pipes de modèle).
+                # options passent. Le CLI re-vérifie le mandat à l'exécution (pipes de modèle, et
+                # l'affichage `cli_affiche` reste LOCAL — aucun réseau n'est accordé par cette famille).
                 for v in valeurs or []:
                     rendu.append(f"{outil}(stilhawt {v}:*)")
             else:
@@ -189,6 +190,39 @@ def griefs_cli(valeurs: list[str], grammaire: dict | None = None) -> list[str]:
                          f"s'accorde en v0")
         else:
             g.append(f"octroi cli « {v} » : trop de mots — `<espace> <verbe>`, les options passent seules")
+    return g
+
+
+# Les pipes d'AFFICHAGE LOCAL qu'un agent peut déclencher : ils MONTRENT (page + opener, éditeur,
+# toast), rien ne quitte le poste. Liste FERMÉE — la triade létale reste cassée (aucune jambe
+# d'exfiltration : pas de réseau, pas d'écriture, pas de modèle ; le modèle s'accorde par `modeles`
+# et le CLI le re-vérifie même sur le chemin interne de `view --live --explain`).
+_AFFICHE_LOCAL = {"view", "open", "notify"}
+
+
+def griefs_cli_affiche(valeurs: list[str], grammaire: dict | None = None) -> list[str]:
+    """Ce qu'un octroi `cli_affiche` a le droit de nommer : un pipe d'AFFICHAGE LOCAL (liste fermée
+    `_AFFICHE_LOCAL`, d'effet `display`). Jamais une commande, jamais un pipe de modèle ou réseau —
+    l'affichage est local, aucune donnée ne sort (Règle N°1, la jambe d'exfiltration reste absente)."""
+    if grammaire is None:
+        from stilhawt_cli.grammar import load as _load
+        grammaire = _load()
+    g = []
+    pipes = grammaire.get("pipes") or {}
+    for v in valeurs:
+        mots = str(v).split()
+        if len(mots) != 1 or "*" in str(v):
+            g.append(f"octroi cli_affiche « {v} » : un pipe d'affichage NOMMÉ ({sorted(_AFFICHE_LOCAL)})")
+            continue
+        name = mots[0]
+        p = pipes.get(name)
+        if p is None:
+            g.append(f"octroi cli_affiche « {v} » : pipe inconnu de la grammaire du CLI")
+        elif name not in _AFFICHE_LOCAL:
+            g.append(f"octroi cli_affiche « {v} » : seul l'affichage LOCAL s'accorde "
+                     f"({sorted(_AFFICHE_LOCAL)}) — pas « {name} » (réseau/écriture = exfiltration)")
+        elif p.get("effect") != "display":
+            g.append(f"octroi cli_affiche « {v} » : effet « {p.get('effect')} » — attendu `display`")
     return g
 
 
@@ -271,6 +305,8 @@ def griefs(doc: dict, grammaire_cli: dict | None = None, racine_ws: Path | None 
                         g.append(f"{ou} : « {v} » n'est pas une commande nommée — blanc-seing")
             elif spec["portee"] == "cli":
                 g += [f"{ou} : {x}" for x in griefs_cli(valeurs or [], grammaire_cli)]
+            elif spec["portee"] == "cli_affiche":
+                g += [f"{ou} : {x}" for x in griefs_cli_affiche(valeurs or [], grammaire_cli)]
             elif spec["portee"] == "aucune" and valeurs:
                 g.append(f"{ou} : la famille « {famille} » ne se borne pas ; "
                          f"la lister avec des valeurs laisse croire l'inverse")
@@ -615,6 +651,15 @@ def _selftest() -> int:
           any("inconnue" in x for x in griefs_cli(["git blame"], gram)), True)
     check("MUST-FAIL `stilhawt *` est un blanc-seing",
           any("blanc-seing" in x for x in griefs_cli(["*"], gram)), True)
+
+    # cli_affiche : l'affichage LOCAL (view/open/notify), jamais lecture, commande, réseau ni modèle.
+    # Grammaire inline (le `gram` du test ne porte pas `view`) : view=display, where=read.
+    gv = {"pipes": {"view": {"effect": "display"}, "where": {"effect": "read"}}, "namespaces": {}}
+    check("cli_affiche accepte un pipe d'affichage local (view)", griefs_cli_affiche(["view"], gv), [])
+    check("MUST-FAIL cli_affiche refuse un pipe de LECTURE (where ≠ display)",
+          any("affichage LOCAL" in x for x in griefs_cli_affiche(["where"], gv)), True)
+    check("MUST-FAIL cli_affiche refuse une COMMANDE (git hunks n'est pas un pipe d'affichage)",
+          any("NOMMÉ" in x for x in griefs_cli_affiche(["git hunks"], gv)), True)
 
     # --- le lint, sur un contrat FABRIQUÉ pour être faux ---
     base = {

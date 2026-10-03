@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stilhawt-cli"
-version = "0.2.2"
+version = "0.3.0"
 description = "A typed, bounded command line for humans and AI agents: commands declared in a grammar, JSON Lines pipes, parallel branches, AI pipes behind an egress guard."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -19,6 +19,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Utilities",
 ]
+
+[project.urls]
+Homepage = "https://stilhawt.com"
+Repository = "https://github.com/StilHawt/stilhawt-cli"
 
 [project.optional-dependencies]
 # The shell: tables (rich), completion and history (prompt_toolkit). Without them the CLI still

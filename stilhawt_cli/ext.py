@@ -157,6 +157,24 @@ def notifier(fn=None):
     return fn
 
 
+_OPENER: list = []
+
+
+def opener(fn=None):
+    """Register HOW a written page is SHOWN: `fn(path) -> str` (the state, SAID — « opened in … »,
+    « unreachable … »), or, called bare, return the one in force (None: nobody registered → the
+    caller falls back to the OS browser). `view` WRITES the page, then asks the opener to show it:
+    a headless or agent-driven caller registers a DECLARED EXTERNAL viewer (a browser tool it can
+    reach) instead of the local `webbrowser`, which opens no window there. Same shape as `notifier`
+    (an external gateway shows it; the state is reported, never assumed). A second opener is refused."""
+    if fn is None:
+        return _OPENER[0] if _OPENER else None
+    if _OPENER and _OPENER[0] is not fn and _OPENER[0].__qualname__ != fn.__qualname__:
+        raise Refusal(f"an opener is already registered ({_OPENER[0].__module__}): one place")
+    _OPENER[:] = [fn]
+    return fn
+
+
 def data_path(sub: str):
     """The directory for `sub`, created: the registered place, else the default."""
     return data_dir()(sub)
@@ -188,6 +206,7 @@ def _selftest() -> int:
 
     saved_t, saved_g, saved_a = {m: dict(t) for m, t in TRANSPORTS.items()}, list(_GUARD), list(_GRAPH_AUDIT)
     saved_c, saved_d, saved_k = list(_EGRESS_CONTRACT), list(_DATA_DIR), dict(_CREDENTIALS)
+    saved_o = list(_OPENER)
     try:
         for t in TRANSPORTS.values():
             t.clear()
@@ -295,6 +314,20 @@ def _selftest() -> int:
             except Refusal:
                 got = "refused"
             check("MUST-FAIL a second data dir is refused", got == "refused")
+        # opener: nobody registered → None (the caller uses the OS browser); a registered one shows
+        _OPENER.clear()
+        check("MUST-FAIL no opener registered: None (caller falls back to the OS browser)", opener() is None)
+
+        @opener
+        def o1(path):
+            return f"opened {path}"
+        check("the registered opener decides how a page is shown", opener() is o1 and opener()("p.html") == "opened p.html")
+        try:
+            opener(lambda p: "x")
+            got = "accepted"
+        except Refusal:
+            got = "refused"
+        check("MUST-FAIL a second opener is refused (one place)", got == "refused")
     finally:
         for m, t in TRANSPORTS.items():
             t.clear()
@@ -303,6 +336,7 @@ def _selftest() -> int:
         _GRAPH_AUDIT[:] = saved_a
         _EGRESS_CONTRACT[:] = saved_c
         _DATA_DIR[:] = saved_d
+        _OPENER[:] = saved_o
         _CREDENTIALS.clear()
         _CREDENTIALS.update(saved_k)
     print(f"{ok}/{total} selftests passed")
