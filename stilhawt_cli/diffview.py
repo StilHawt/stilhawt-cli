@@ -374,7 +374,12 @@ def serve_live(diff_fn, explain_fn=None, *, port: int = 0, host: str = "127.0.0.
 def git_diff_text(rev: str | None = None, staged: bool = False, dir_: str | None = None) -> str:
     # The tool runs from the CLI's ROOT, but the user stands elsewhere: resolve the repository
     # against STILHAWT_CALLER_CWD (the engine's convention, `cli.std.here`), default = where they are.
+    import shutil
     from stilhawt_cli.std import here
+    from stilhawt_cli.tool import ToolRefusal
+    if not shutil.which("git"):
+        # Same refusal as `git status` (cli.std) — the blank tester got a raw FileNotFoundError here.
+        raise ToolRefusal("git is not installed (or not on the PATH) — `git hunks` asks git for the diff")
     cwd = str(here(dir_))
     args = ["git", "diff", "--no-color"]
     if staged:
@@ -445,6 +450,25 @@ def _selftest() -> int:
         ok += bool(cond)
         if not cond:
             print(f"  ✗ {name}")
+
+    # 0.3.2 — the blank tester (no git in the image): `git hunks` leaked a Python traceback where
+    # `git status` refuses cleanly. Same namespace, same quality of refusal.
+    import shutil as _sh
+    from stilhawt_cli.tool import ToolRefusal as _TR
+    saved_which = _sh.which
+    try:
+        _sh.which = lambda name, *a, **k: None if name == "git" else saved_which(name, *a, **k)
+        try:
+            git_diff_text()
+            refused = ""
+        except _TR as e:
+            refused = str(e)
+        except Exception as e:  # the bug: a raw FileNotFoundError
+            refused = f"RAW {type(e).__name__}"
+    finally:
+        _sh.which = saved_which
+    check("MUST-FAIL without git, `git hunks` REFUSES with the reason, never a traceback",
+          "git is not installed" in refused)
 
     rows = parse_unified_diff(_SAMPLE)
     by_file: dict[str, list[dict]] = {}

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stilhawt-cli"
-version = "0.3.1"
+version = "0.3.2"
 description = "A typed, bounded command line for humans and AI agents: commands declared in a grammar, JSON Lines pipes, parallel branches, AI pipes behind an egress guard."
 readme = "README.md"
 license = {text = "Apache-2.0"}

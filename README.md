@@ -82,7 +82,8 @@ model is gone — set the variable to one the provider serves today.
 A model is one stage of a pipeline like any other, with three things a raw API call does not give you.
 
 **1. You choose what leaves — field by field.** `--on` names the fields sent; nothing else is.
-Private keys (starting with `_`) and what an earlier model added never leave.
+Private keys (starting with `_`) never leave — even if `--on` names them, the line is refused. What an
+earlier model added leaves only when `--on` names it on purpose (that is how two models are chained).
 
 ```text
 stilhawt 'data read examples/reviews.csv | select id product text'
@@ -167,7 +168,8 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 |---|---|---|
 | `where` | keep objects matching one condition | `where stars gt 3` |
 | `select` / `sort` / `head` | project, order, cut | `sort -lines \| head 10` |
-| `count` / `sum` / `avg` / `group` | aggregates made by the TOOL | `group language sum lines` |
+| `grep` | keep objects where the text appears in any value (`-v`: the inverse) | `grep refund` |
+| `count` / `sum` / `avg` / `min` / `max` / `group` | aggregates made by the TOOL | `group language sum lines` |
 | `flatten` | one object per element of a list field | `tools commands \| flatten options` |
 | `extract` / `replace` | sed-like, into fields, no model | `extract text "^(?P<first>\w+)"` |
 | `tee` … `join` | parallel branches, merged by key | `tee (where stars gt 3) (where stars lt 3) \| join id` |
@@ -175,6 +177,7 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 | `diff` | what changed since the last snapshot, by key | `diff reviews --key id` |
 | `view` | a local page: table, bars, tree, graph, document, diff | `view bar product stars` |
 | `notify` | a local desktop notification (says `not sent` when no notifier answers) | `notify "repos behind"` |
+| `open` | opens the files the objects name, inside the current project | `fs search TODO \| head 3 \| open` |
 | `groq` / `jev` | generate / decide, per object or `--all` | see above |
 
 ## Generic tools

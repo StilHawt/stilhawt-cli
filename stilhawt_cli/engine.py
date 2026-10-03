@@ -317,15 +317,51 @@ def acting_args(c: dict, args: list[str]) -> list[str]:
 CALLER_CWD = "STILHAWT_CALLER_CWD"
 
 
+def kill_tree(proc: subprocess.Popen) -> None:
+    """Stop a process AND everything it started. A child runs without a console (_NO_WINDOW), so the
+    terminal's Ctrl-C never reaches it: killing only the parent let a publishing command push on its own
+    after the user had interrupted (2026-10-03). Windows: taskkill /T; elsewhere: the child's own session."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, creationflags=_NO_WINDOW)
+    else:
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def run_interruptible(cmd: list[str], cwd: str, env: dict, timeout: float) -> subprocess.CompletedProcess:
+    """`subprocess.run` that an interruption (Ctrl-C) or a timeout stops ENTIRELY — the child and its own
+    children — before the refusal is raised. Nothing keeps running behind the user's back."""
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", creationflags=_NO_WINDOW,
+                            start_new_session=os.name != "nt")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except KeyboardInterrupt:
+        kill_tree(proc)
+        raise Refusal("interrupted — the command and everything it started were stopped (nothing kept running)")
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        raise Refusal(f"the command took longer than its declared {timeout:g} s — stopped, with everything it started")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def kind_command(c: dict, root: Path, args: list[str]) -> list[dict]:
     # The tool runs from the ROOT (its homes are relative to it), but a path the USER typed is relative
     # to where they stand: the caller's directory travels with the call, and a tool resolves user paths
     # against it (`cli.std.here`). Found running the README's `data read examples/…` from a clone
     # (2026-09-29): the file was looked for under the root.
     env = {**os.environ, CALLER_CWD: os.environ.get(CALLER_CWD) or os.getcwd()}
-    r = subprocess.run(_python(list(c["command"]), root) + acting_args(c, args), cwd=str(root), env=env,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       timeout=c.get("timeout_s", 300), creationflags=_NO_WINDOW)
+    r = run_interruptible(_python(list(c["command"]), root) + acting_args(c, args), cwd=str(root), env=env,
+                          timeout=c.get("timeout_s", 300))
     # A VERDICT code is not a crash: a checker exits 1 precisely when it found failures, and that
     # is when its rows matter most. A command declares which codes still carry its answer
     # (`ok_codes: [0, 1]`); any other code is a failure of the tool itself.
@@ -562,11 +598,37 @@ def pipe_where(objects, args):
         raise Refusal(f"`where` needs a condition <key> <op> <value> — keys here: {', '.join(keys) or '(none)'} "
                       f"· op: gt lt ge le eq ne contains · e.g. `{example}` · text anywhere: `grep <text>`")
     kept = [o for o in objects if predicate(args)(o)]
-    # A key NO object carries is a typo, not an empty answer: said on stderr, the stream stays empty
-    # (a filter that keeps nothing is a legitimate result — a key that exists nowhere is not).
-    if objects and not kept and all(get(o, args[0]) is None for o in objects):
-        print(f"where: no object carries `{args[0]}` — keys here: {', '.join(_keys_of(objects)[:14])}", file=sys.stderr)
+    note = where_note(objects, args, kept)
+    if note:
+        print(note, file=sys.stderr)
     return kept
+
+
+def where_note(objects, args, kept=None) -> str | None:
+    """Why a `where` kept NOTHING when the cause is not the data but the line — said, never silent. PURE.
+    A filter that legitimately keeps nothing says nothing."""
+    kept = [o for o in objects if predicate(args)(o)] if kept is None else kept
+    if not objects or kept or not args:
+        return None
+    key = args[0].split(">")[0].split("<")[0].split("=")[0].split("~")[0]
+    values = [get(o, key) for o in objects]
+    if all(v is None for v in values):
+        # The field of a model that answered nothing: name the refusal, not « no object carries it »
+        # (0.3.1 tester: `where jev.margin` after a jev without key — the message looked false).
+        head = key.split(".")[0]
+        why = next((str(o.get(f"{head}_refused")) for o in objects if o.get(f"{head}_refused")), None)
+        if why and head != key:
+            return f"where: `{head}` answered nothing ({why}) — `{key}` is empty everywhere"
+        return f"where: no object carries `{key}` — keys here: {', '.join(_keys_of(objects)[:14])}"
+    if len(args) >= 3 and args[1] in ("gt", "lt", "ge", "le", ">", "<", ">=", "<="):
+        expected = _literal(" ".join(args[2:]).strip("\"'"))
+        present = [v for v in values if v is not None]
+        mismatched = [v for v in present if (isinstance(v, (int, float)) and not isinstance(v, bool))
+                      != (isinstance(expected, (int, float)) and not isinstance(expected, bool))]
+        if present and len(mismatched) == len(present):
+            kinds = "text with numbers" if isinstance(expected, str) else "a number with text"
+            return f"where: `{' '.join(args)}` compares {kinds} — nothing can pass (quote nothing, or compare like with like)"
+    return None
 
 
 def pipe_grep(objects, args):
@@ -1673,7 +1735,11 @@ def _ai_gate(name: str, objects: list, args: list[str], ctx: dict) -> dict:
         raise Refusal(f"`{name}` does not know what kind of content it would send — "
                       f"give `--pan texte|code` (outside the shell the originating command is unknown)")
     bound = int(spec.get("max_objects") or 50)
-    limit = int(flags.get("max") or bound)
+    raw_max = flags.get("max")
+    if raw_max is not None and not str(raw_max).isdigit():
+        # `--max abc` raised a bare ValueError (blank tester, 0.3.0): a refusal with the correct form.
+        raise Refusal(f"`{name} --max {raw_max}`: --max takes a number of objects (1 to {bound}), e.g. `--max 10`")
+    limit = int(raw_max or bound)
     if limit > bound:
         raise Refusal(f"`--max {limit}` exceeds the declared bound ({bound}) of the {name} pipe")
     calls = 1 if flags.get("all") else len(objects)
@@ -1687,6 +1753,12 @@ def _ai_gate(name: str, objects: list, args: list[str], ctx: dict) -> dict:
     if not os.environ.get("STILHAWT_MANDAT") and spec.get("default_mandate"):
         os.environ["STILHAWT_MANDAT"] = spec["default_mandate"]
     keys = [k for k in (flags.get("on") or "").split(",") if k] or None
+    # PRIVATE keys (`_…`, at any level of a dotted path) never leave — `--on` included. The filter only ran
+    # when `--on` was absent, so `--on _secret` sent it (blank tester, 0.3.0 and 0.3.1).
+    private = [k for k in keys or [] if any(part.startswith("_") for part in k.split("."))]
+    if private:
+        raise Refusal(f"`{name} --on {','.join(private)}`: private keys (starting with `_`) never leave — "
+                      f"nothing was sent; rename the field if it is meant to be shared")
     # `--on` is THE promise « you choose what leaves »: a field no object carries is a typo, and the
     # call went out anyway with nulls (a blank tester, 2026-09-29). Refused before anything leaves.
     missing = [k for k in keys or [] if objects and all(get(o, k) is None for o in objects)]
@@ -2952,6 +3024,38 @@ def _selftest() -> int:
     refuses("MUST-FAIL a field that EXISTS but is empty everywhere says so, and why — not « no object carries it »",
             lambda: apply_pipes([{"id": 1, "groq": None, "groq_refused": "no key"}],
                                 [["jev", "q", "--options", "a,b", "--on", "groq"]], net, ctx), "every value is empty")
+    # 0.3.2 — an interruption stops the WHOLE tree (Ctrl-C let `oss release` push behind the user's back).
+    with tempfile.TemporaryDirectory() as hb_dir:
+        beat = Path(hb_dir) / "beat"
+        grandchild = ("import time,pathlib,sys\np=pathlib.Path(sys.argv[1])\n"
+                      "while True:\n    p.write_text(str(time.time()))\n    time.sleep(0.1)\n")
+        child = (f"import subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c',{grandchild!r},sys.argv[1]])\n"
+                 "time.sleep(60)\n")
+        p = subprocess.Popen([sys.executable, "-c", child, str(beat)], creationflags=_NO_WINDOW,
+                             start_new_session=os.name != "nt")
+        for _ in range(50):
+            if beat.exists():
+                break
+            time.sleep(0.1)
+        kill_tree(p)
+        time.sleep(0.5)
+        before = beat.read_text() if beat.exists() else ""
+        time.sleep(0.6)
+        after = beat.read_text() if beat.exists() else ""
+        check("MUST-FAIL after kill_tree the GRANDCHILD is dead too (its heartbeat stopped)",
+              bool(before) and before == after, True)
+    # 0.3.2 — the blank tester's findings on 0.3.0 / 0.3.1 (data/oss/stilhawt-cli/probes/), test FIRST.
+    prompts.clear()
+    refuses("MUST-FAIL a private key (`_…`) never leaves, even when `--on` names it (README promise)",
+            lambda: apply_pipes([{"id": 1, "_secret": "k"}], [["groq", "q", "--on", "_secret"]], net, gctx), "private")
+    check("... and not one call went out", prompts, [])
+    refuses("MUST-FAIL `--max abc` is a refusal with the correct form, never a traceback",
+            lambda: apply_pipes(projs, [["groq", "q", "--max", "abc"]], net, gctx), "--max takes a number")
+    check("MUST-FAIL `where` comparing text with a number SAYS so (a typed CLI never answers by silence)",
+          "compares" in (where_note([{"stars": 4}, {"stars": 5}], ["stars", "gt", "abc"]) or ""), True)
+    check("MUST-FAIL `where` on the field of a model that answered nothing names the model's refusal",
+          "answered nothing" in (where_note([{"jev": None, "jev_refused": "no key"}], ["jev.margin", "gt", "0.5"]) or ""), True)
+    check("`where` that legitimately keeps nothing says nothing", where_note([{"stars": 1}], ["stars", "gt", "3"]), None)
     refuses("MUST-FAIL `head` of zero or less is refused (the Unix `head -1` reflex returned nothing)",
             lambda: pipe_head([{"a": 1}], ["-1"]), "1 or more")
     check("a whole line in ONE quoted argument is split like the shell inside `stilhawt`",
