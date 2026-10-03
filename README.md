@@ -167,12 +167,14 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 |---|---|---|
 | `where` | keep objects matching one condition | `where stars gt 3` |
 | `select` / `sort` / `head` | project, order, cut | `sort -lines \| head 10` |
-| `count` / `sum` / `group` | aggregates made by the TOOL | `group language sum lines` |
+| `count` / `sum` / `avg` / `group` | aggregates made by the TOOL | `group language sum lines` |
+| `flatten` | one object per element of a list field | `tools commands \| flatten options` |
 | `extract` / `replace` | sed-like, into fields, no model | `extract text "^(?P<first>\w+)"` |
 | `tee` … `join` | parallel branches, merged by key | `tee (where stars gt 3) (where stars lt 3) \| join id` |
 | `each` | one READ command per object, `{}` = its value | `git status . \| each repo (fs files {})` |
 | `diff` | what changed since the last snapshot, by key | `diff reviews --key id` |
-| `view` | a local page: table, bars, tree, graph, document | `view bar product stars` |
+| `view` | a local page: table, bars, tree, graph, document, diff | `view bar product stars` |
+| `notify` | a local desktop notification (says `not sent` when no notifier answers) | `notify "repos behind"` |
 | `groq` / `jev` | generate / decide, per object or `--all` | see above |
 
 ## Generic tools
@@ -183,11 +185,15 @@ you can paste into a Markdown file. `STILHAWT_VIEW_NO_OPEN=1` writes the page wi
 | `fs search <text>` | a typed grep: file, line, text |
 | `data read <file>` | JSON, JSON Lines, CSV, TSV or YAML as rows |
 | `git status [dir]` | every git repository below: branch, modified, untracked, conflicts, ahead, behind (needs git) |
+| `git hunks [range]` | one row per hunk of the current repository's diff: file, change, line counts, the raw hunk, its language (`--staged` for the index) |
 | `http get <url>` | status, time, type, size, title |
 | `dsl read` / `dsl tree` | navigate a YAML / JSON document |
 | `ai keys` / `ai probe` | the model keys: set or not, valid or not — never a value |
 
 Count the code of a project: `stilhawt 'fs files . | where vendored eq false | where kind eq code | group language sum lines'`.
+
+Review a change hunk by hunk, folded: `stilhawt 'git hunks main...HEAD | view diff'` — or keep a page
+that re-reads the working tree as you edit: `stilhawt 'git hunks | view diff --live'`.
 
 ## Adding your own commands
 
@@ -223,6 +229,10 @@ by the modules the grammar names under `extensions:` — this package ships `sti
 An agent can be held to a **mandate** (`STILHAWT_MANDAT=<id>`): a declared list of the commands and
 pipes it may run. A line using anything else is refused before it runs — the barrier is the grant, not
 an instruction in a prompt. Example: `stilhawt_cli/mandats.dsl.yaml`.
+
+**Snippets** are named lines (`@dirty-repos`) an agent — or you — can run instead of retyping them;
+`snip list` shows each one with its intent and how often it ran, `snip uses` every recorded run.
+Examples: `stilhawt_cli/snippets/snippets.dsl.yaml`.
 
 ## How we use it — and why yours will differ
 
@@ -289,7 +299,12 @@ Every module carries its own self-test, including cases that **must fail**:
 ```bash
 python -m stilhawt_cli --selftest
 python -m stilhawt_cli.std --selftest
+python -m stilhawt_cli.ext --selftest
 python -m stilhawt_cli.ext_models --selftest
+python -m stilhawt_cli.tool --selftest
+python -m stilhawt_cli.snippets --selftest
+python -m stilhawt_cli.mandat --selftest
+python -m stilhawt_cli.diffview --selftest
 python -m stilhawt_cli.telemetry --selftest
 ```
 
